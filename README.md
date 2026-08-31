@@ -2,7 +2,7 @@
 
 <img src="icon/app.png" width="180" align="left" alt="Wipeout">
 
-macOS GUI for wiping a USB stick, SD card, or external NVMe back to a single full-size partition — including drives written by Rufus, Ventoy, dd, or any Linux tool that leaves partitions macOS refuses to touch. Replaces the diskpart-on-Windows workflow.
+If the macOS Disk Utility won't fully erase a drive, it's usually because there's a partition on it that Disk Utility can't see. This tool wipes a USB stick, SD card, or non-system drive back to one full-size partition with the file system of your choosing without having to dive into terminal commands. I built it for my own use, but if it's useful to anyone else, all the better.
 
 App carefully directed by [Andy Rostad](https://github.com/arostad).  Released under the [MIT License](https://github.com/arostad/Wipeout/blob/main/LICENSE).
 
