@@ -59,6 +59,7 @@ private struct AboutView: View {
     @State private var checking = false
     @State private var updateAvailable = false
 
+    private let sourceURL = URL(string: "https://github.com/arostad/Wipeout")!
     private let licenseURL = URL(string: "https://github.com/arostad/Wipeout/blob/main/LICENSE")!
 
     var body: some View {
@@ -74,11 +75,13 @@ private struct AboutView: View {
             Text("Wipe and format USB and SD drives.")
 
             HStack(spacing: 0) {
-                Text("Vibe coded by ")
+                Text("App carefully directed by ")
                 Link(BuildInfo.author, destination: URL(string: BuildInfo.githubURL)!)
-                Text(".")
             }
             .font(.callout)
+
+            Link("Source", destination: sourceURL)
+                .font(.callout)
 
             HStack(spacing: 0) {
                 Text("Released under the ")

@@ -4,7 +4,9 @@
 
 macOS GUI for wiping a USB stick, SD card, or external NVMe back to a single full-size partition — including drives written by Rufus, Ventoy, dd, or any Linux tool that leaves partitions macOS refuses to touch. Replaces the diskpart-on-Windows workflow.
 
-Vibe coded by [Andy Rostad](https://github.com/arostad). Released under the [MIT License](LICENSE).
+App carefully directed by [Andy Rostad](https://github.com/arostad)
+
+Released under the [MIT License](LICENSE).
 
 <br clear="all">
 
