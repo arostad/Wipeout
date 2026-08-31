@@ -1,6 +1,6 @@
 # Wipeout
 
-<img src="icon/AppIcon.iconset/icon_256x256@2x.png" width="180" align="left" alt="Wipeout">
+<img src="icon/app.png" width="180" align="left" alt="Wipeout">
 
 <br><br>
 
