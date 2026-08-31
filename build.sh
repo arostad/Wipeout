@@ -1,14 +1,13 @@
 #!/bin/bash
 # Builds Wipeout.app from the .swift files next to this script.
-#   ./build.sh                 -> ./build/Wipeout.app  (host arch)
-#   UNIVERSAL=1 ./build.sh     -> arm64 + x86_64 fat binary
+#   ./build.sh                 -> ./build/Wipeout.app  (Apple Silicon)
 #   INSTALL=1 ./build.sh       -> also copies the bundle to ~/Applications
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
 # ==============================================================
-VERSION="0.1.10"     # <-- BUMP THIS each change
+VERSION="0.2.10"     # <-- BUMP THIS each change
 #   patch +1  small change or fix
 #   minor +1  new feature, reset patch to 10
 # ==============================================================
@@ -18,7 +17,7 @@ APP_NAME="Wipeout.app"
 BUNDLE_ID="co.dataspike.wipeout"
 MIN_MACOS="13.0"
 AUTHOR="Andy Rostad"
-COPYRIGHT="Copyright © 2026 Andy Rostad. All rights reserved."
+COPYRIGHT="Copyright © 2026 Andy Rostad. MIT License."
 GITHUB_URL="https://github.com/arostad"
 GITHUB_HANDLE="@arostad"
 BUILD_DIR="build"
@@ -37,7 +36,7 @@ enum BuildInfo {
 }
 VERSRC
 
-SOURCES=(Disk.swift FormatRunner.swift UI.swift Version.swift)
+SOURCES=(Disk.swift FormatRunner.swift UpdateChecker.swift UI.swift Version.swift)
 for f in "${SOURCES[@]}"; do
   [ -f "$f" ] || { echo "missing source: $f"; exit 1; }
 done
@@ -53,15 +52,7 @@ compile() {
     -o "$out" "${SOURCES[@]}"
 }
 
-if [ "${UNIVERSAL:-0}" = "1" ]; then
-  compile arm64  "${BUILD_DIR}/${BIN_NAME}-arm64"
-  compile x86_64 "${BUILD_DIR}/${BIN_NAME}-x86_64"
-  lipo -create -output "${APP_DIR}/Contents/MacOS/${BIN_NAME}" \
-    "${BUILD_DIR}/${BIN_NAME}-arm64" "${BUILD_DIR}/${BIN_NAME}-x86_64"
-  rm -f "${BUILD_DIR}/${BIN_NAME}-arm64" "${BUILD_DIR}/${BIN_NAME}-x86_64"
-else
-  compile "$(uname -m)" "${APP_DIR}/Contents/MacOS/${BIN_NAME}"
-fi
+compile arm64 "${APP_DIR}/Contents/MacOS/${BIN_NAME}"
 
 cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -85,6 +76,7 @@ cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
 PLIST
 
 printf 'APPL????' > "${APP_DIR}/Contents/PkgInfo"
+cp LICENSE "${APP_DIR}/Contents/Resources/LICENSE"
 
 if [ -f resources/Shell.efi ]; then
   cp resources/Shell.efi "${APP_DIR}/Contents/Resources/Shell.efi"

@@ -24,11 +24,22 @@ jobs:
       - name: Zip app bundle
         run: ditto -c -k --sequesterRsrc --keepParent build/Wipeout.app Wipeout.app.zip
 
+      - name: Create update metadata
+        run: |
+          VERSION=$(awk -F'"' '/^VERSION="/ { print $2; exit }' build.sh)
+          test -n "$VERSION"
+          printf '%s' "$VERSION" > version.txt
+          HASH=$(shasum -a 256 Wipeout.app.zip | awk '{ print tolower($1) }')
+          printf '%s  Wipeout.app.zip' "$HASH" > Wipeout.app.zip.sha256
+
       - name: Upload artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: Wipeout-macOS-arm64
-          path: Wipeout.app.zip
+          path: |
+            Wipeout.app.zip
+            Wipeout.app.zip.sha256
+            version.txt
           if-no-files-found: error
 
   release:
@@ -49,5 +60,8 @@ jobs:
           tag_name: latest
           name: Latest
           body: Apple Silicon build of Wipeout. This file is replaced on every push to main.
-          files: Wipeout.app.zip
+          files: |
+            Wipeout.app.zip
+            Wipeout.app.zip.sha256
+            version.txt
           make_latest: true
