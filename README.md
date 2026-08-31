@@ -17,6 +17,7 @@ macOS GUI for wiping a USB stick, SD card, or external NVMe back to a single ful
 - **Live console** — Shows what ran and its output.
 - **Built-in safeguards** — Blocks the Mac's boot disk and hides other internal disks unless you opt in.
 - **Clean volume labels** — Sanitizes the label for the selected filesystem.
+- **MIT licensed** — Free to use, modify, and share under the [MIT License](LICENSE).
 
 ## Download
 
