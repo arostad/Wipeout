@@ -1,9 +1,9 @@
-# Wipeout
+<h1>Wipeout</h1>
 
 <table>
 <tr>
-<td valign="middle">
-<img src="icon/app.png" width="180" alt="Wipeout">
+<td valign="middle" width="180">
+<img src="icon/app.png" width="180" height="180" alt="Wipeout">
 </td>
 <td valign="middle">
 
