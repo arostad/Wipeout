@@ -2,7 +2,7 @@
 
 <img src="icon/app.png" width="180" align="left" alt="Wipeout">
 
-If the macOS Disk Utility won't fully erase a drive, it's usually because there's a partition on it that Disk Utility can't see. This tool wipes a USB stick, SD card, or non-system drive back to one full-size partition with the file system of your choosing without having to dive into terminal commands. I built it for my own use, but if it's useful to anyone else, all the better.
+If a drive shows up smaller than it should after erasing it in the macOS Disk Utility, it's usually because of a partition Disk Utility can't see. This tool wipes a USB stick, SD card, or any non-system drive back to one full-size partition with the file system of your choosing without having to dive into terminal commands. I built this tool for my own workflow, but if it's useful to anyone else, all the better.
 
 App carefully directed by [Andy Rostad](https://github.com/arostad).  Released under the [MIT License](https://github.com/arostad/Wipeout/blob/main/LICENSE).
 
