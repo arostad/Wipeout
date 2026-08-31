@@ -1,0 +1,4 @@
+build/
+Version.swift
+.DS_Store
+*.app
