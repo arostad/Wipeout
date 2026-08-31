@@ -76,6 +76,7 @@ cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
 PLIST
 
 printf 'APPL????' > "${APP_DIR}/Contents/PkgInfo"
+cp LICENSE "${APP_DIR}/Contents/Resources/LICENSE"
 
 if [ -f resources/Shell.efi ]; then
   cp resources/Shell.efi "${APP_DIR}/Contents/Resources/Shell.efi"
