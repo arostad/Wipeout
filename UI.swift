@@ -60,7 +60,6 @@ private struct AboutView: View {
     @State private var updateAvailable = false
 
     private let licenseURL = URL(string: "https://github.com/arostad/Wipeout/blob/main/LICENSE")!
-    private let repositoryURL = URL(string: "https://github.com/arostad/Wipeout")!
 
     var body: some View {
         VStack(spacing: 12) {
@@ -72,19 +71,19 @@ private struct AboutView: View {
                 .font(.title2.bold())
             Text("Version \(BuildInfo.version)")
                 .foregroundColor(.secondary)
-            Text("Erase any drive back to one clean partition.")
+            Text("Wipe and format USB and SD drives.")
 
-            HStack(spacing: 4) {
-                Text("Created by")
+            HStack(spacing: 0) {
+                Text("Vibe coded by ")
                 Link(BuildInfo.author, destination: URL(string: BuildInfo.githubURL)!)
-                Text("·")
-                Link("GitHub", destination: repositoryURL)
+                Text(".")
             }
             .font(.callout)
 
-            VStack(spacing: 3) {
-                Text("Copyright (c) 2026 Andy Rostad")
+            HStack(spacing: 0) {
+                Text("Released under the ")
                 Link("MIT License", destination: licenseURL)
+                Text(".")
             }
             .font(.caption)
             .foregroundColor(.secondary)
