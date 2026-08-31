@@ -20,7 +20,7 @@ App carefully directed by [Andy Rostad](https://github.com/arostad).  Released u
 
 ## Download
 
-[**Download Wipeout.app.zip**](https://github.com/arostad/Wipeout/releases/download/latest/Wipeout.app.zip)
+[**Download Wipeout.zip**](https://github.com/arostad/Wipeout/releases/download/latest/Wipeout.app.zip)
 
 Apple Silicon only. GitHub Actions rebuilds this download on every push to `main`. Unzip to get `Wipeout.app`.
 
