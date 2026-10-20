@@ -153,7 +153,7 @@ private final class OneShotRequest: NSObject, URLSessionDataDelegate {
 
 enum UpdateChecker {
     private static let workerVersionURL =
-        "https://wipeout-update-pings.andy-s-account-376.workers.dev/version.txt"
+        "https://wipeout-update-pings.dataspike.workers.dev/version.txt"
     private static let fallbackVersionURL =
         "https://github.com/arostad/Wipeout/releases/download/latest/version.txt"
     private static let zipURL =
@@ -166,7 +166,7 @@ enum UpdateChecker {
     private static let maximumSmallResponseBytes: Int64 = 1_024
     private static let maximumRedirects = 5
     private static let trustedHosts: Set<String> = [
-        "wipeout-update-pings.andy-s-account-376.workers.dev",
+        "wipeout-update-pings.dataspike.workers.dev",
         "github.com",
         "objects.githubusercontent.com",
         "release-assets.githubusercontent.com",
