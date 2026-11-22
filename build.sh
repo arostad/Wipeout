@@ -7,7 +7,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 # ==============================================================
-VERSION="0.4.14"     # <-- BUMP THIS each change
+VERSION="0.4.15"     # <-- BUMP THIS each change
 #   patch +1  small change or fix
 #   minor +1  new feature, reset patch to 10
 # ==============================================================
@@ -59,8 +59,8 @@ cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key><string>Wipeout</string>
-    <key>CFBundleDisplayName</key><string>Wipeout</string>
+    <key>CFBundleName</key><string>wipeout</string>
+    <key>CFBundleDisplayName</key><string>wipeout</string>
     <key>CFBundleExecutable</key><string>${BIN_NAME}</string>
     <key>CFBundleIdentifier</key><string>${BUNDLE_ID}</string>
     <key>CFBundlePackageType</key><string>APPL</string>
@@ -69,6 +69,7 @@ cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
     <key>LSMinimumSystemVersion</key><string>${MIN_MACOS}</string>
     <key>NSHumanReadableCopyright</key><string>${COPYRIGHT}</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
+    <key>ATSApplicationFontsPath</key><string>Fonts</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSPrincipalClass</key><string>NSApplication</string>
 </dict>
@@ -77,6 +78,18 @@ PLIST
 
 printf 'APPL????' > "${APP_DIR}/Contents/PkgInfo"
 cp LICENSE "${APP_DIR}/Contents/Resources/LICENSE"
+
+FONT_FILE="resources/fonts/PlusJakartaSans-SemiBold.ttf"
+FONT_OFL="resources/fonts/OFL.txt"
+if [ ! -f "$FONT_FILE" ] || [ ! -f "$FONT_OFL" ]; then
+  echo "error: Plus Jakarta Sans SemiBold or its OFL.txt is missing under resources/fonts/" >&2
+  exit 1
+fi
+mkdir -p "${APP_DIR}/Contents/Resources/Fonts"
+cp "$FONT_FILE" "${APP_DIR}/Contents/Resources/Fonts/PlusJakartaSans-SemiBold.ttf"
+cp "$FONT_OFL" "${APP_DIR}/Contents/Resources/OFL.txt"
+echo "bundled Plus Jakarta Sans SemiBold (SIL OFL)"
+
 
 if [ -f resources/Shell.efi ]; then
   cp resources/Shell.efi "${APP_DIR}/Contents/Resources/Shell.efi"

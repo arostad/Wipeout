@@ -1,6 +1,6 @@
-# Wipeout
+# wipeout
 
-<img src="icon/app.png" width="180" align="left" alt="Wipeout">
+<img src="icon/app.png" width="180" align="left" alt="wipeout">
 
 If a drive shows up smaller than it should after erasing it in the macOS Disk Utility, it's usually because of a partition Disk Utility can't see. This tool wipes a USB stick, SD card, or any non-system drive back to one full-size partition with the file system of your choosing without having to dive into terminal commands. I built this tool for my own workflow, but if it's useful to anyone else, all the better.
 
@@ -22,8 +22,10 @@ App created by [Andy Rostad](https://github.com/arostad).  Released under the [M
 
 ## Download
 
-[**Download Wipeout.zip**](https://github.com/arostad/Wipeout/releases/download/latest/Wipeout.app.zip)
+[**Download wipeout.zip**](https://github.com/arostad/Wipeout/releases/download/latest/Wipeout.app.zip)
 
 Apple Silicon only. GitHub Actions rebuilds this download on every push to `main`. Unzip to get `Wipeout.app`.
 
-> Wipeout destroys the selected disk. The Mac's boot disk is blocked.
+> wipeout destroys the selected disk. The Mac's boot disk is blocked.
+
+The About wordmark uses [Plus Jakarta Sans](https://github.com/tokotype/PlusJakartaSans) SemiBold (SIL OFL 1.1) by Tokotype.

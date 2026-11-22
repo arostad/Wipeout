@@ -648,7 +648,7 @@ final class FormatRunner: ObservableObject {
                     if ns.code == NSFileWriteNoPermissionError || ns.code == 513 || ns.code == 1 {
                         blocked = true
                         out.append((.error, "macOS blocked writing to the removable volume."))
-                        out.append((.warning, "Allow Wipeout under Privacy & Security > Files and Folders > Removable Volumes, then run again. The drive is already formatted, so a rerun only re-stages the files."))
+                        out.append((.warning, "Allow wipeout under Privacy & Security > Files and Folders > Removable Volumes, then run again. The drive is already formatted, so a rerun only re-stages the files."))
                     } else {
                         out.append((.error, "Staging failed: \(error.localizedDescription)"))
                     }

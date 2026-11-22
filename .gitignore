@@ -2,3 +2,8 @@ build/
 Version.swift
 .DS_Store
 *.app
+__MACOSX/
+._*
+Thumbs.db
+ehthumbs.db
+desktop.ini

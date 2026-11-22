@@ -1,0 +1,7 @@
+Plus Jakarta Sans SemiBold (static TTF), version 2.7.1
+Upstream: https://github.com/tokotype/PlusJakartaSans
+Release zip: https://github.com/tokotype/PlusJakartaSans/releases/download/2.7.1/PlusJakartaSans-2.7.1.zip
+Path in the zip: ttf/PlusJakartaSans-SemiBold.ttf
+License: SIL Open Font License 1.1 (OFL.txt in this folder)
+PostScript name: PlusJakartaSans-SemiBold
+Weight: 600
