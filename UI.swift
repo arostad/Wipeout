@@ -103,7 +103,7 @@ private struct AboutView: View {
                 }
 
                 Toggle("Check for updates at launch (recommended)", isOn: $checkAtLaunch)
-                    .toggleStyle(.checkbox)
+                    .toggleStyle(OrangeCheckboxStyle())
 
                 Text("Each update check sends one anonymous request to the Wipeout update server. It counts only the country the request came from, for a rough guesstimate of the app's popularity (or lack thereof) for my own curiosity. Your IP address is never stored, and no identifiers, cookies, or telemetry are used.")
                     .font(.caption)
@@ -132,6 +132,7 @@ private struct AboutView: View {
                 .disabled(checking)
                 Spacer()
                 Button("Close") { NSApp.keyWindow?.close() }
+                    .buttonStyle(PrimaryButtonStyle())
                     .keyboardShortcut(.defaultAction)
             }
             .padding(.horizontal, 20)
@@ -238,7 +239,7 @@ struct ContentView: View {
                     Text("Device").font(.headline)
                     Spacer()
                     Toggle("Show internal disks", isOn: $showInternal)
-                        .toggleStyle(.checkbox)
+                        .toggleStyle(OrangeCheckboxStyle())
                     Button("Rescan") { rescan() }
                         .disabled(runner.isRunning)
                 }
@@ -261,11 +262,11 @@ struct ContentView: View {
                     if d.isBootDisk {
                         Text("This disk backs the running system. Formatting is blocked.")
                             .font(.caption).bold()
-                            .foregroundColor(.red)
+                            .foregroundColor(.wipeoutError)
                     } else if d.isInternal {
                         Text("Internal disk selected. Verify the identifier before continuing.")
                             .font(.caption).bold()
-                            .foregroundColor(.orange)
+                            .foregroundColor(.wipeoutWarning)
                     }
                 }
             }
@@ -329,7 +330,7 @@ struct ContentView: View {
                     if FormatRunner.shellBinaryURL() == nil {
                         Text("Shell.efi not found. Put it at \(FormatRunner.shellBinaryHint) or in the app bundle's Resources folder.")
                             .font(.caption).bold()
-                            .foregroundColor(.red)
+                            .foregroundColor(.wipeoutError)
                     } else {
                         Text("Writes EFI/BOOT/BOOTX64.EFI plus an empty Update folder. Firmware boots it as removable media.")
                             .font(.caption)
@@ -341,7 +342,7 @@ struct ContentView: View {
                     HStack(spacing: 8) {
                         Text("macOS blocked writing to the removable volume.")
                             .font(.caption).bold()
-                            .foregroundColor(.red)
+                            .foregroundColor(.wipeoutError)
                         Button("Open privacy settings") {
                             if let u = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders") {
                                 NSWorkspace.shared.open(u)
@@ -352,10 +353,10 @@ struct ContentView: View {
 
                 HStack(spacing: 16) {
                     Toggle("Dry run (print commands only)", isOn: $dryRun)
-                        .toggleStyle(.checkbox)
+                        .toggleStyle(OrangeCheckboxStyle())
                         .disabled(runner.isRunning)
                     Toggle("Deep wipe (zero whole device)", isOn: $deepWipe)
-                        .toggleStyle(.checkbox)
+                        .toggleStyle(OrangeCheckboxStyle())
                         .disabled(runner.isRunning)
                         .help(deepWipeEstimate)
                     Spacer()
@@ -364,11 +365,13 @@ struct ContentView: View {
                         Button("Eject") {
                             runner.eject(target) { rescan() }
                         }
+                        .buttonStyle(PrimaryButtonStyle())
                         .keyboardShortcut(.defaultAction)
                         .disabled(runner.isRunning)
                         .help("Eject \(target.id) so it is safe to unplug")
                     } else {
                         Button(dryRun ? "Preview" : "Erase & Format") { confirming = true }
+                            .buttonStyle(PrimaryButtonStyle())
                             .keyboardShortcut(.defaultAction)
                             .disabled(!canFormat)
                     }
@@ -388,10 +391,10 @@ struct ContentView: View {
                 if let ok = runner.lastExitOK {
                     Text(ok ? "last run: OK" : "last run: FAILED")
                         .font(.caption)
-                        .foregroundColor(ok ? .green : .red)
+                        .foregroundColor(ok ? .wipeoutSuccess : .wipeoutError)
                 }
                 Toggle("Show details", isOn: $showDetails)
-                    .toggleStyle(.checkbox)
+                    .toggleStyle(OrangeCheckboxStyle())
                     .help("Show the raw diskutil output")
                 Button("Copy") {
                     NSPasteboard.general.clearContents()
@@ -474,6 +477,7 @@ struct ContentView: View {
             if !isInstallingUpdate {
                 HStack {
                     Button("Update") { installUpdate() }
+                        .buttonStyle(PrimaryButtonStyle())
                         .keyboardShortcut(.defaultAction)
                     Button("Later") {
                         availableUpdate = nil
@@ -487,7 +491,7 @@ struct ContentView: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.accentColor.opacity(0.12))
+        .background(Color.secondary.opacity(0.12))
         .clipShape(RoundedRectangle(cornerRadius: 7))
     }
 
@@ -575,11 +579,11 @@ private struct ConsoleLineView: View {
 
     private var color: Color {
         switch line.level {
-        case .step: return .accentColor
+        case .step: return .primary
         case .info: return .secondary
-        case .success: return .green
-        case .warning: return .orange
-        case .error: return .red
+        case .success: return .wipeoutSuccess
+        case .warning: return .wipeoutWarning
+        case .error: return .wipeoutError
         case .detail: return .secondary
         }
     }
@@ -632,9 +636,106 @@ private struct OutcomeBanner: View {
 
     private var color: Color {
         switch outcome {
-        case .success, .ejected: return .green
-        case .preview: return .accentColor
-        case .failure: return .red
+        case .success, .ejected: return .wipeoutSuccess
+        case .preview: return .secondary
+        case .failure: return .wipeoutError
+        }
+    }
+}
+
+// MARK: - Palette and control styles (mockup A, 0.3.11)
+
+private func dynamicColor(light: UInt32, dark: UInt32) -> Color {
+    func ns(_ hex: UInt32) -> NSColor {
+        NSColor(srgbRed: CGFloat((hex >> 16) & 0xFF) / 255,
+                green: CGFloat((hex >> 8) & 0xFF) / 255,
+                blue: CGFloat(hex & 0xFF) / 255,
+                alpha: 1)
+    }
+    return Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? ns(dark) : ns(light)
+    })
+}
+
+extension Color {
+    /// Icon orange. Checkbox fills, button edges.
+    static let wipeoutAccent = dynamicColor(light: 0xFE5000, dark: 0xFE5000)
+    /// Deeper icon orange for fills behind white text (5.0:1 with white).
+    static let wipeoutAccentFill = dynamicColor(light: 0xC93F00, dark: 0xC93F00)
+    /// Warnings are yellow so they never read as the accent orange.
+    static let wipeoutWarning = dynamicColor(light: 0xB88A00, dark: 0xFFD60A)
+    static let wipeoutSuccess = dynamicColor(light: 0x248A3D, dark: 0x30D158)
+    static let wipeoutError = dynamicColor(light: 0xD70015, dark: 0xFF453A)
+}
+
+/// Filled orange primary button. Ignores the system accent color on purpose.
+struct PrimaryButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        PrimaryButtonBody(configuration: configuration)
+    }
+
+    private struct PrimaryButtonBody: View {
+        let configuration: ButtonStyle.Configuration
+        @Environment(\.isEnabled) private var isEnabled
+
+        var body: some View {
+            configuration.label
+                .font(.body.weight(.semibold))
+                .foregroundColor(.white)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 4)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.wipeoutAccentFill)
+                        .brightness(configuration.isPressed ? -0.08 : 0)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .strokeBorder(Color.wipeoutAccent, lineWidth: 1)
+                )
+                .opacity(isEnabled ? 1 : 0.45)
+                .contentShape(RoundedRectangle(cornerRadius: 6))
+        }
+    }
+}
+
+/// Checkbox that is orange when checked, regardless of the system accent color.
+struct OrangeCheckboxStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        OrangeCheckbox(configuration: configuration)
+    }
+
+    private struct OrangeCheckbox: View {
+        let configuration: ToggleStyle.Configuration
+        @Environment(\.isEnabled) private var isEnabled
+
+        var body: some View {
+            Button {
+                configuration.isOn.toggle()
+            } label: {
+                HStack(spacing: 6) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 3.5)
+                            .fill(configuration.isOn ? Color.wipeoutAccent : Color(nsColor: .controlBackgroundColor))
+                        RoundedRectangle(cornerRadius: 3.5)
+                            .strokeBorder(configuration.isOn ? Color.wipeoutAccent : Color.secondary.opacity(0.6),
+                                          lineWidth: 1)
+                        if configuration.isOn {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 9, weight: .heavy))
+                                .foregroundColor(.white)
+                        }
+                    }
+                    .frame(width: 14, height: 14)
+                    configuration.label
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .opacity(isEnabled ? 1 : 0.5)
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityValue(configuration.isOn ? "checked" : "unchecked")
         }
     }
 }
