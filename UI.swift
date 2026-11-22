@@ -12,6 +12,7 @@ struct WipeoutApp: App {
                 .frame(minWidth: 760, minHeight: 620)
         }
         .windowResizability(.contentMinSize)
+        .windowToolbarStyle(.unifiedCompact)
         .commands { AboutCommands() }
 
         Window("About Wipeout", id: "about") {
@@ -61,7 +62,7 @@ private struct LabeledRow<Content: View>: View {
 /// UserDefaults key for "Check for updates at launch". Defaults to on.
 let checkUpdatesAtLaunchKey = "checkForUpdatesAtLaunch"
 
-/// Shared install state for the main-window update banner and the About window.
+/// Shared install state for the main-window update popover and the About window.
 @MainActor
 final class UpdateInstallController: ObservableObject {
     enum Phase: Equatable {
@@ -342,6 +343,7 @@ struct ContentView: View {
     @State private var confirming: Bool = false
     @State private var didCheckForUpdates = false
     @State private var availableUpdate: UpdateInfo?
+    @State private var showingUpdatePopover = false
     @State private var updateMessage = ""
     @State private var showDetails = false
     @AppStorage(checkUpdatesAtLaunchKey) private var checkAtLaunch = true
@@ -553,7 +555,7 @@ struct ContentView: View {
             HStack {
                 Text("Console").font(.headline)
                 Spacer()
-                if let ok = runner.lastExitOK {
+                if runner.outcome == nil, let ok = runner.lastExitOK {
                     Text(ok ? "last run: OK" : "last run: FAILED")
                         .font(.caption)
                         .foregroundColor(ok ? .wipeoutSuccess : .wipeoutError)
@@ -569,6 +571,10 @@ struct ContentView: View {
                 .disabled(runner.console.isEmpty)
                 Button("Clear") { runner.clear() }
                     .disabled(runner.isRunning || runner.console.isEmpty)
+            }
+
+            if let outcome = runner.outcome {
+                OutcomeBanner(outcome: outcome)
             }
 
             ScrollViewReader { proxy in
@@ -601,11 +607,34 @@ struct ContentView: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .overlay(alignment: .top) {
-            floatingBanners
+        .toolbar {
+            // Always attach a toolbar item so the compact title-bar height stays
+            // put when the update button appears or disappears. The button itself
+            // is only shown when an update is available.
+            ToolbarItem(placement: .primaryAction) {
+                if let update = availableUpdate {
+                    Button("Update to \(update.remoteVersion)") {
+                        showingUpdatePopover = true
+                    }
+                    .buttonStyle(CompactUpdateToolbarButtonStyle())
+                    .help("You have \(BuildInfo.version)")
+                    .popover(isPresented: $showingUpdatePopover, arrowEdge: .bottom) {
+                        updatePopover(update)
+                    }
+                } else {
+                    Color.clear
+                        .frame(width: 0, height: 0)
+                        .accessibilityHidden(true)
+                }
+            }
         }
-        .animation(.easeInOut(duration: 0.28), value: availableUpdate != nil)
-        .animation(.easeInOut(duration: 0.28), value: runner.outcome)
+        .onChange(of: showingUpdatePopover) { open in
+            // Clicking outside must not lose the download / checksum UI;
+            // the popover stays up until relaunch or an error.
+            if !open && updateInstall.isBusy {
+                DispatchQueue.main.async { showingUpdatePopover = true }
+            }
+        }
         .contentShape(Rectangle())
         .onTapGesture { labelFocused = false }
         .onChange(of: settingsKey) { _ in runner.clearReady() }
@@ -638,14 +667,15 @@ struct ContentView: View {
     // MARK: Actions
 
     @ViewBuilder
-    private func updateBanner(_ update: UpdateInfo) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+    private func updatePopover(_ update: UpdateInfo) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
             if updateInstall.phase == .idle {
                 Text(updateMessage.isEmpty
                      ? "Version \(update.remoteVersion) is available (you have \(BuildInfo.version))."
                      : updateMessage)
                     .font(.callout)
                     .foregroundColor(updateMessage.isEmpty ? .primary : .wipeoutError)
+                    .fixedSize(horizontal: false, vertical: true)
             } else {
                 UpdateInstallProgressView(installer: updateInstall)
             }
@@ -656,6 +686,7 @@ struct ContentView: View {
                         .buttonStyle(PrimaryButtonStyle())
                         .keyboardShortcut(.defaultAction)
                     Button("Later") {
+                        showingUpdatePopover = false
                         availableUpdate = nil
                         updateMessage = ""
                         updateInstall.reset()
@@ -663,38 +694,8 @@ struct ContentView: View {
                 }
             }
         }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 7)
-                .fill(Color.secondary.opacity(0.12))
-        )
-        .background(
-            RoundedRectangle(cornerRadius: 7)
-                .fill(Color(nsColor: .windowBackgroundColor))
-                .shadow(color: Color.black.opacity(0.28), radius: 10, y: 3)
-        )
-    }
-
-    @ViewBuilder
-    private var floatingBanners: some View {
-        // Empty when nothing is showing so the overlay doesn't steal clicks
-        // from Device / Format. Padding lives on this card stack, not the window.
-        if availableUpdate != nil || runner.outcome != nil {
-            VStack(alignment: .leading, spacing: 10) {
-                if let update = availableUpdate {
-                    updateBanner(update)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                }
-                if let outcome = runner.outcome {
-                    OutcomeBanner(outcome: outcome)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                }
-            }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .top)
-            .transition(.move(edge: .top).combined(with: .opacity))
-        }
+        .padding(14)
+        .frame(width: 340, alignment: .leading)
     }
 
     private func checkForUpdatesOnce() {
@@ -712,6 +713,7 @@ struct ContentView: View {
     private func installUpdate() {
         guard availableUpdate != nil else { return }
         updateMessage = ""
+        showingUpdatePopover = true
         Task {
             do {
                 try await updateInstall.start()
@@ -807,20 +809,11 @@ private struct OutcomeBanner: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(10)
+        .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 7)
-                .fill(color.opacity(0.14))
-        )
-        .background(
-            RoundedRectangle(cornerRadius: 7)
-                .fill(Color(nsColor: .windowBackgroundColor))
-        )
+        .background(color.opacity(0.14))
         .overlay(RoundedRectangle(cornerRadius: 7).stroke(color.opacity(0.45)))
         .clipShape(RoundedRectangle(cornerRadius: 7))
-        .compositingGroup()
-        .shadow(color: Color.black.opacity(0.28), radius: 10, y: 3)
     }
 
     private var title: String {
@@ -906,6 +899,27 @@ struct PrimaryButtonStyle: ButtonStyle {
                 .opacity(isEnabled ? 1 : 0.45)
                 .contentShape(RoundedRectangle(cornerRadius: 6))
         }
+    }
+}
+
+/// Compact orange button for the trailing title-bar update action.
+private struct CompactUpdateToolbarButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.callout.weight(.semibold))
+            .foregroundColor(.white)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 2)
+            .background(
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(Color.wipeoutAccentFill)
+                    .brightness(configuration.isPressed ? -0.08 : 0)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 5)
+                    .strokeBorder(Color.wipeoutAccent, lineWidth: 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 5))
     }
 }
 
