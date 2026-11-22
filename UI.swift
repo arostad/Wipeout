@@ -54,64 +54,91 @@ private struct LabeledRow<Content: View>: View {
     }
 }
 
+/// UserDefaults key for "Check for updates at launch". Defaults to on.
+let checkUpdatesAtLaunchKey = "checkForUpdatesAtLaunch"
+
 private struct AboutView: View {
     @State private var status = ""
     @State private var checking = false
     @State private var updateAvailable = false
+    @AppStorage(checkUpdatesAtLaunchKey) private var checkAtLaunch = true
 
     private let sourceURL = URL(string: "https://github.com/arostad/Wipeout")!
     private let licenseURL = URL(string: "https://github.com/arostad/Wipeout/blob/main/LICENSE")!
 
     var body: some View {
-        VStack(spacing: 12) {
-            Image(nsImage: NSApplication.shared.applicationIconImage)
-                .resizable()
-                .frame(width: 80, height: 80)
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .center, spacing: 16) {
+                    Image(nsImage: NSApplication.shared.applicationIconImage)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 72, height: 72)
+                        .accessibilityHidden(true)
 
-            Text("Wipeout")
-                .font(.title2.bold())
-            Text("Version \(BuildInfo.version)")
-                .foregroundColor(.secondary)
-            Text("Wipe and format USB and SD drives.")
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Wipeout")
+                            .font(.largeTitle.bold())
+                        Text("Version \(BuildInfo.version)")
+                            .font(.headline)
+                        Link("GitHub project page", destination: sourceURL)
+                            .font(.callout)
+                    }
+                }
 
-            HStack(spacing: 0) {
-                Text("App carefully directed by ")
-                Link(BuildInfo.author, destination: URL(string: BuildInfo.githubURL)!)
+                Text("Wipes a USB stick, SD card, or any non-system drive back to one full-size partition with the file system of your choosing.")
+                    .fixedSize(horizontal: false, vertical: true)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 0) {
+                        Text("App created by ")
+                        Link(BuildInfo.author, destination: URL(string: BuildInfo.githubURL)!)
+                        Text(".")
+                    }
+                    HStack(spacing: 0) {
+                        Text("Released under the ")
+                        Link("MIT License", destination: licenseURL)
+                        Text(".")
+                    }
+                }
+
+                Toggle("Check for updates at launch (recommended)", isOn: $checkAtLaunch)
+                    .toggleStyle(.checkbox)
+
+                Text("Each update check sends one anonymous request to the Wipeout update server. It counts only the country the request came from, for a rough guesstimate of the app's popularity (or lack thereof) for my own curiosity. Your IP address is never stored, and no identifiers, cookies, or telemetry are used.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if !status.isEmpty {
+                    Text(status)
+                        .font(.callout)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
-            .font(.callout)
-
-            Link("Source", destination: sourceURL)
-                .font(.callout)
-
-            HStack(spacing: 0) {
-                Text("Released under the ")
-                Link("MIT License", destination: licenseURL)
-                Text(".")
-            }
-            .font(.caption)
-            .foregroundColor(.secondary)
+            .padding(20)
 
             Divider()
 
-            Button(updateAvailable ? "Update now" : "Check for updates") {
-                if updateAvailable {
-                    installUpdate()
-                } else {
-                    checkForUpdates()
+            HStack {
+                Button(updateAvailable ? "Update now" : "Check for updates") {
+                    if updateAvailable {
+                        installUpdate()
+                    } else {
+                        checkForUpdates()
+                    }
                 }
+                .disabled(checking)
+                Spacer()
+                Button("Close") { NSApp.keyWindow?.close() }
+                    .keyboardShortcut(.defaultAction)
             }
-            .disabled(checking)
-
-            if !status.isEmpty {
-                Text(status)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 360)
-            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            .background(Color(nsColor: .windowBackgroundColor).opacity(0.6))
         }
-        .padding(24)
-        .frame(width: 430)
+        .frame(width: 460)
     }
 
     private func checkForUpdates() {
@@ -164,6 +191,19 @@ struct ContentView: View {
     @State private var availableUpdate: UpdateInfo?
     @State private var updateMessage = ""
     @State private var isInstallingUpdate = false
+    @State private var showDetails = false
+    @AppStorage(checkUpdatesAtLaunchKey) private var checkAtLaunch = true
+
+    /// Everything that defines a format job. Changing any of it drops the Eject state.
+    private var settingsKey: String {
+        "\(selectedID)|\(fs.rawValue)|\(FormatRunner.sanitize(volumeName, for: fs))|\(uefiScheme)|\(deepWipe)|\(dryRun)"
+    }
+
+    /// The drive just formatted with the current settings, ready to eject.
+    private var ejectTarget: Disk? {
+        guard let d = runner.readyDisk, runner.readyKey == settingsKey, d.id == selectedID else { return nil }
+        return d
+    }
 
     private var visibleDisks: [Disk] {
         disks.filter { showInternal || !$0.isInternal }
@@ -320,15 +360,28 @@ struct ContentView: View {
                         .help(deepWipeEstimate)
                     Spacer()
                     if runner.isRunning { ProgressView().controlSize(.small) }
-                    Button(dryRun ? "Preview" : "Erase & Format") { confirming = true }
+                    if let target = ejectTarget {
+                        Button("Eject") {
+                            runner.eject(target) { rescan() }
+                        }
                         .keyboardShortcut(.defaultAction)
-                        .disabled(!canFormat)
+                        .disabled(runner.isRunning)
+                        .help("Eject \(target.id) so it is safe to unplug")
+                    } else {
+                        Button(dryRun ? "Preview" : "Erase & Format") { confirming = true }
+                            .keyboardShortcut(.defaultAction)
+                            .disabled(!canFormat)
+                    }
                 }
             }
 
             Divider()
 
             // Console
+            if let outcome = runner.outcome {
+                OutcomeBanner(outcome: outcome)
+            }
+
             HStack {
                 Text("Console").font(.headline)
                 Spacer()
@@ -337,10 +390,14 @@ struct ContentView: View {
                         .font(.caption)
                         .foregroundColor(ok ? .green : .red)
                 }
+                Toggle("Show details", isOn: $showDetails)
+                    .toggleStyle(.checkbox)
+                    .help("Show the raw diskutil output")
                 Button("Copy") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(runner.console, forType: .string)
                 }
+                .help("Copy the full raw log")
                 .disabled(runner.console.isEmpty)
                 Button("Clear") { runner.clear() }
                     .disabled(runner.isRunning || runner.console.isEmpty)
@@ -348,17 +405,27 @@ struct ContentView: View {
 
             ScrollViewReader { proxy in
                 ScrollView {
-                    Text(runner.console.isEmpty ? "idle\n" : runner.console)
-                        .font(.system(size: 11, weight: .regular, design: .monospaced))
-                        .foregroundColor(Color(white: 0.88))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(8)
+                    LazyVStack(alignment: .leading, spacing: 3) {
+                        if runner.lines.isEmpty {
+                            Text("Idle. Pick a drive and a format, then click Erase & Format.")
+                                .foregroundColor(.secondary)
+                        }
+                        ForEach(runner.lines.filter { showDetails || $0.level != .detail }) { line in
+                            ConsoleLineView(line: line)
+                        }
+                    }
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
                     Color.clear.frame(height: 1).id("bottom")
                 }
-                .background(Color.black.opacity(0.92))
+                .background(Color(nsColor: .textBackgroundColor))
                 .clipShape(RoundedRectangle(cornerRadius: 6))
-                .onChange(of: runner.console) { _ in
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.25)))
+                .onChange(of: runner.lines.count) { _ in
+                    proxy.scrollTo("bottom", anchor: .bottom)
+                }
+                .onChange(of: showDetails) { _ in
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
             }
@@ -367,6 +434,10 @@ struct ContentView: View {
         .padding(16)
         .contentShape(Rectangle())
         .onTapGesture { labelFocused = false }
+        .onChange(of: settingsKey) { _ in runner.clearReady() }
+        .onChange(of: runner.lastExitOK) { ok in
+            if ok == false { showDetails = true }
+        }
         .onAppear {
             rescan()
             checkForUpdatesOnce()
@@ -423,6 +494,7 @@ struct ContentView: View {
     private func checkForUpdatesOnce() {
         guard !didCheckForUpdates else { return }
         didCheckForUpdates = true
+        guard checkAtLaunch else { return }
         Task {
             let info = await UpdateChecker.check()
             if info.isNewer {
@@ -459,8 +531,110 @@ struct ContentView: View {
 
     private func launch() {
         guard let d = selected else { return }
-        runner.appendLocal("")
         runner.start(disk: d, fs: fs, volumeName: volumeName, dryRun: dryRun, deepWipe: deepWipe,
-                     schemeOverride: fs.allowsSchemeOverride ? uefiScheme : nil)
+                     schemeOverride: fs.allowsSchemeOverride ? uefiScheme : nil,
+                     settingsKey: settingsKey)
+    }
+}
+
+// MARK: - Console views
+
+private struct ConsoleLineView: View {
+    let line: ConsoleLine
+
+    var body: some View {
+        switch line.level {
+        case .detail:
+            Text(line.text.isEmpty ? " " : line.text)
+                .font(.system(.caption, design: .monospaced))
+                .foregroundColor(.secondary)
+                .padding(.leading, 22)
+        default:
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: symbol)
+                    .foregroundColor(color)
+                    .frame(width: 16)
+                Text(line.text)
+                    .font(line.level == .step ? .callout.weight(.semibold) : .callout)
+                    .foregroundColor(line.level == .step || line.level == .info ? .primary : color)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var symbol: String {
+        switch line.level {
+        case .step: return "arrow.right.circle"
+        case .info: return "info.circle"
+        case .success: return "checkmark.circle.fill"
+        case .warning: return "exclamationmark.triangle.fill"
+        case .error: return "xmark.octagon.fill"
+        case .detail: return "circle"
+        }
+    }
+
+    private var color: Color {
+        switch line.level {
+        case .step: return .accentColor
+        case .info: return .secondary
+        case .success: return .green
+        case .warning: return .orange
+        case .error: return .red
+        case .detail: return .secondary
+        }
+    }
+}
+
+private struct OutcomeBanner: View {
+    let outcome: RunOutcome
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: symbol)
+                .font(.title2)
+                .foregroundColor(color)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.headline)
+                Text(detail)
+                    .font(.callout)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(color.opacity(0.14))
+        .overlay(RoundedRectangle(cornerRadius: 7).stroke(color.opacity(0.45)))
+        .clipShape(RoundedRectangle(cornerRadius: 7))
+    }
+
+    private var title: String {
+        switch outcome {
+        case .success(let t, _), .preview(let t, _), .failure(let t, _), .ejected(let t, _): return t
+        }
+    }
+
+    private var detail: String {
+        switch outcome {
+        case .success(_, let d), .preview(_, let d), .failure(_, let d), .ejected(_, let d): return d
+        }
+    }
+
+    private var symbol: String {
+        switch outcome {
+        case .success: return "checkmark.seal.fill"
+        case .preview: return "eye"
+        case .failure: return "xmark.octagon.fill"
+        case .ejected: return "eject.circle.fill"
+        }
+    }
+
+    private var color: Color {
+        switch outcome {
+        case .success, .ejected: return .green
+        case .preview: return .accentColor
+        case .failure: return .red
+        }
     }
 }
