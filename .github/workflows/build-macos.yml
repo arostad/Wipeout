@@ -22,23 +22,85 @@ jobs:
         run: ./build.sh
 
       - name: Zip app bundle
-        run: ditto -c -k --sequesterRsrc --keepParent build/Wipeout.app Wipeout.app.zip
+        run: |
+          set -euo pipefail
+          test -d build/wipeout.app
+          # Unique working names: macos-latest is case-insensitive APFS, so
+          # wipeout.app.zip and Wipeout.app.zip cannot both exist on this runner.
+          # The release job (Linux) renames them to the published names.
+          ditto -c -k --sequesterRsrc --keepParent build/wipeout.app current-wipeout.app.zip
+
+          # Legacy zip for 0.4.15 and older updaters: they require a top-level
+          # entry literally named Wipeout.app. Case-rename the bundle via a
+          # temporary name, zip, then rename back.
+          staging="build/.legacy-bundle-rename-$$"
+          mv build/wipeout.app "$staging"
+          mv "$staging" build/Wipeout.app
+          ditto -c -k --sequesterRsrc --keepParent build/Wipeout.app legacy-Wipeout.app.zip
+          mv build/Wipeout.app "$staging"
+          mv "$staging" build/wipeout.app
 
       - name: Create update metadata
         run: |
+          set -euo pipefail
           VERSION=$(awk -F'"' '/^VERSION="/ { print $2; exit }' build.sh)
           test -n "$VERSION"
           printf '%s' "$VERSION" > version.txt
-          HASH=$(shasum -a 256 Wipeout.app.zip | awk '{ print tolower($1) }')
-          printf '%s  Wipeout.app.zip' "$HASH" > Wipeout.app.zip.sha256
+          # Sidecars use the published filenames, which old and new updaters expect.
+          HASH=$(shasum -a 256 current-wipeout.app.zip | awk '{ print tolower($1) }')
+          printf '%s  wipeout.app.zip' "$HASH" > current-wipeout.app.zip.sha256
+          LEGACY_HASH=$(shasum -a 256 legacy-Wipeout.app.zip | awk '{ print tolower($1) }')
+          printf '%s  Wipeout.app.zip' "$LEGACY_HASH" > legacy-Wipeout.app.zip.sha256
+
+      - name: Verify update zip contract
+        run: |
+          python3 - <<'PY'
+          import hashlib, plistlib, zipfile
+          from pathlib import Path
+
+          def check(zip_path, top, executable):
+              zf = zipfile.ZipFile(zip_path)
+              names = zf.namelist()
+              tops = {n.split("/")[0] for n in names}
+              assert tops == {top}, f"{zip_path}: top-level {tops}, expected {{{top}}}"
+              exe = f"{top}/Contents/MacOS/{executable}"
+              plist_name = f"{top}/Contents/Info.plist"
+              assert exe in names, f"{zip_path}: missing {exe}"
+              assert plist_name in names, f"{zip_path}: missing Info.plist"
+              plist = plistlib.loads(zf.read(plist_name))
+              assert plist.get("CFBundleExecutable") == executable, plist.get("CFBundleExecutable")
+              assert plist.get("CFBundleShortVersionString") == Path("version.txt").read_text()
+              print(f"ok {zip_path}: top={top} exe={executable} entries={len(names)}")
+
+          check("current-wipeout.app.zip", "wipeout.app", "wipeout")
+          check("legacy-Wipeout.app.zip", "Wipeout.app", "wipeout")
+
+          pairs = (
+              ("current-wipeout.app.zip", "current-wipeout.app.zip.sha256", "wipeout.app.zip"),
+              ("legacy-Wipeout.app.zip", "legacy-Wipeout.app.zip.sha256", "Wipeout.app.zip"),
+          )
+          for zip_name, sidecar_name, published_name in pairs:
+              actual = hashlib.sha256(Path(zip_name).read_bytes()).hexdigest()
+              sidecar = Path(sidecar_name).read_text().strip().split()
+              assert sidecar[0].lower() == actual, (sidecar_name, sidecar[0], actual)
+              assert sidecar[-1] == published_name, sidecar
+              print(f"ok {sidecar_name} matches and names {published_name}")
+
+          h1 = hashlib.sha256(Path("current-wipeout.app.zip").read_bytes()).hexdigest()
+          h2 = hashlib.sha256(Path("legacy-Wipeout.app.zip").read_bytes()).hexdigest()
+          assert h1 != h2, "expected the legacy zip to hash differently"
+          print("ok zip hashes differ")
+          PY
 
       - name: Upload artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: Wipeout-macOS-arm64
+          name: wipeout-macOS-arm64
           path: |
-            Wipeout.app.zip
-            Wipeout.app.zip.sha256
+            current-wipeout.app.zip
+            current-wipeout.app.zip.sha256
+            legacy-Wipeout.app.zip
+            legacy-Wipeout.app.zip.sha256
             version.txt
           if-no-files-found: error
 
@@ -52,15 +114,27 @@ jobs:
       - name: Download app artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: Wipeout-macOS-arm64
+          name: wipeout-macOS-arm64
+
+      - name: Rename zips to published names
+        run: |
+          set -euo pipefail
+          # Ubuntu is case-sensitive, so both official names can exist here.
+          mv current-wipeout.app.zip wipeout.app.zip
+          mv current-wipeout.app.zip.sha256 wipeout.app.zip.sha256
+          mv legacy-Wipeout.app.zip Wipeout.app.zip
+          mv legacy-Wipeout.app.zip.sha256 Wipeout.app.zip.sha256
+          ls -l wipeout.app.zip Wipeout.app.zip wipeout.app.zip.sha256 Wipeout.app.zip.sha256 version.txt
 
       - name: Publish latest release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: latest
           name: Latest
-          body: Apple Silicon build of wipeout. This file is replaced on every push to main.
+          body: Apple Silicon build of wipeout. This file is replaced on every push to main. The lowercase wipeout.app.zip is the current download; Wipeout.app.zip is kept so older in-app updaters still work.
           files: |
+            wipeout.app.zip
+            wipeout.app.zip.sha256
             Wipeout.app.zip
             Wipeout.app.zip.sha256
             version.txt

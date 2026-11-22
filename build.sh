@@ -1,19 +1,19 @@
 #!/bin/bash
-# Builds Wipeout.app from the .swift files next to this script.
-#   ./build.sh                 -> ./build/Wipeout.app  (Apple Silicon)
+# Builds wipeout.app from the .swift files next to this script.
+#   ./build.sh                 -> ./build/wipeout.app  (Apple Silicon)
 #   INSTALL=1 ./build.sh       -> also copies the bundle to ~/Applications
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
 # ==============================================================
-VERSION="0.4.15"     # <-- BUMP THIS each change
+VERSION="0.4.16"     # <-- BUMP THIS each change
 #   patch +1  small change or fix
 #   minor +1  new feature, reset patch to 10
 # ==============================================================
 
-BIN_NAME="Wipeout"
-APP_NAME="Wipeout.app"
+BIN_NAME="wipeout"
+APP_NAME="wipeout.app"
 BUNDLE_ID="co.dataspike.wipeout"
 MIN_MACOS="13.0"
 AUTHOR="Andy Rostad"
@@ -120,7 +120,14 @@ echo "built: ${APP_DIR}  (v${VERSION})"
 
 if [ "${INSTALL:-0}" = "1" ]; then
   mkdir -p "${HOME}/Applications"
-  rm -rf "${HOME}/Applications/${APP_NAME}"
-  cp -R "${APP_DIR}" "${HOME}/Applications/"
-  echo "installed: ${HOME}/Applications/${APP_NAME}"
+  dest="${HOME}/Applications/${APP_NAME}"
+  # On case-insensitive APFS, Wipeout.app and wipeout.app are the same path.
+  # Move any existing case-variant aside first, then copy the new lowercase name.
+  if [ -e "$dest" ]; then
+    staging="${HOME}/Applications/.wipeout-install-$$"
+    mv "$dest" "$staging"
+    rm -rf "$staging"
+  fi
+  cp -R "${APP_DIR}" "$dest"
+  echo "installed: $dest"
 fi

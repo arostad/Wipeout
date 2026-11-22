@@ -7,6 +7,6 @@ SHA256 : 50437f8f0623a076f350ae937b0054f5912a14bbf9948c9665ca6ae4b0f31e7a
 PE     : machine 0x8664, subsystem 10 (EFI application)
 License: BSD-2-Clause-Patent (TianoCore EDK II)
 
-build.sh copies this into Wipeout.app/Contents/Resources/Shell.efi. The app also looks in
+build.sh copies this into wipeout.app/Contents/Resources/Shell.efi. The app also looks in
 ~/Library/Application Support/Wipeout/Shell.efi, so you can swap in a newer or vendor-
 specific shell without rebuilding.
