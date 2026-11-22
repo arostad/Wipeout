@@ -10,7 +10,7 @@ App created by [Andy Rostad](https://github.com/arostad).  Released under the [M
 
 ## Features
 
-- **Common filesystems** — ExFAT, FAT32, Mac OS Extended (Journaled), and APFS.
+- **Common filesystems** — ExFAT, FAT32, Mac OS Extended (Journaled), and APFS. NTFS is available when Paragon NTFS or Tuxera NTFS for Mac is installed.
 - **UEFI shell sticks** — Formats FAT32 and stages `EFI/BOOT/BOOTX64.EFI` plus an `Update/` folder for BIOS payloads. Secure Boot usually needs to be off.
 - **Deep wipe** — Optionally zeros the disk before formatting.
 - **Dry run** — Prints the full plan without touching the disk.
