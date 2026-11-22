@@ -14,7 +14,9 @@ App created by [Andy Rostad](https://github.com/arostad).  Released under the [M
 - **UEFI shell sticks** — Formats FAT32 and stages `EFI/BOOT/BOOTX64.EFI` plus an `Update/` folder for BIOS payloads. Secure Boot usually needs to be off.
 - **Deep wipe** — Optionally zeros the disk before formatting.
 - **Dry run** — Prints the full plan without touching the disk.
-- **Live console** — Shows what ran and its output.
+- **No password prompt** — Runs as you. macOS only asks for an administrator password if a drive actually needs it.
+- **Live console** — Plain-English steps, color-coded by severity, with the raw `diskutil` output a click away.
+- **Eject when done** — After a successful format, the button turns into Eject.
 - **Built-in safeguards** — Blocks the Mac's boot disk and hides other internal disks unless you opt in.
 - **Clean volume labels** — Sanitizes the label for the selected filesystem.
 
