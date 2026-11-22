@@ -679,36 +679,23 @@ struct ContentView: View {
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .toolbar {
-            // Always attach a toolbar item so the compact title-bar height stays
-            // put when the update button appears or disappears. The button itself
-            // is only shown when an update is available.
-            ToolbarItem(placement: .primaryAction) {
-                Group {
-                    if let update = availableUpdate {
-                        Button {
-                            showingUpdatePopover = true
-                        } label: {
-                            Label {
-                                Text("Update")
-                            } icon: {
-                                Image(systemName: "arrow.down.circle")
-                                    .foregroundStyle(Color.wipeoutAccent)
-                            }
-                        }
-                        .labelStyle(.titleAndIcon)
-                        .help("Version \(update.remoteVersion) is available (you have \(BuildInfo.version)).")
-                        .popover(isPresented: $showingUpdatePopover, arrowEdge: .bottom) {
-                            updatePopover(update)
-                        }
-                    } else {
-                        Color.clear
-                            .frame(width: 0, height: 0)
-                            .accessibilityHidden(true)
+            // Only add a ToolbarItem when an update exists. 0.4.14–0.4.17 always
+            // attached a zero-size placeholder so the compact title-bar height
+            // would stay put; on macOS 26 that empty item still drew a vacant
+            // glass capsule at the trailing edge. The compact title bar itself
+            // stays in the chrome via .windowToolbarStyle(.unifiedCompact), so
+            // showing or hiding the button does not change the window size.
+            if let update = availableUpdate {
+                if #available(macOS 26.0, *) {
+                    ToolbarItem(placement: .primaryAction) {
+                        updateToolbarButton(update)
+                    }
+                    .sharedBackgroundVisibility(.hidden)
+                } else {
+                    ToolbarItem(placement: .primaryAction) {
+                        updateToolbarButton(update)
                     }
                 }
-                // Keep a standard toolbar inset from the trailing edge;
-                // the 0.4.14 filled pill sat flush against it.
-                .padding(.trailing, 10)
             }
         }
         .onChange(of: showingUpdatePopover) { open in
@@ -750,6 +737,28 @@ struct ContentView: View {
     }
 
     // MARK: Actions
+
+    @ViewBuilder
+    private func updateToolbarButton(_ update: UpdateInfo) -> some View {
+        Button {
+            showingUpdatePopover = true
+        } label: {
+            Label {
+                Text("Update")
+            } icon: {
+                Image(systemName: "arrow.down.circle")
+                    .foregroundStyle(Color.wipeoutAccent)
+            }
+        }
+        .labelStyle(.titleAndIcon)
+        .help("Version \(update.remoteVersion) is available (you have \(BuildInfo.version)).")
+        .popover(isPresented: $showingUpdatePopover, arrowEdge: .bottom) {
+            updatePopover(update)
+        }
+        // Keep a standard toolbar inset from the trailing edge;
+        // the 0.4.14 filled pill sat flush against it.
+        .padding(.trailing, 10)
+    }
 
     @ViewBuilder
     private func updatePopover(_ update: UpdateInfo) -> some View {
