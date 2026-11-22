@@ -383,10 +383,6 @@ struct ContentView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
 
-            if let update = availableUpdate {
-                updateBanner(update)
-            }
-
             // Device selection
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
@@ -544,10 +540,6 @@ struct ContentView: View {
             Divider()
 
             // Console
-            if let outcome = runner.outcome {
-                OutcomeBanner(outcome: outcome)
-            }
-
             HStack {
                 Text("Console").font(.headline)
                 Spacer()
@@ -595,9 +587,15 @@ struct ContentView: View {
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
             }
-            .frame(minHeight: 240)
+            .frame(minHeight: 160, maxHeight: .infinity)
         }
         .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .overlay(alignment: .top) {
+            floatingBanners
+        }
+        .animation(.easeInOut(duration: 0.28), value: availableUpdate != nil)
+        .animation(.easeInOut(duration: 0.28), value: runner.outcome)
         .contentShape(Rectangle())
         .onTapGesture { labelFocused = false }
         .onChange(of: settingsKey) { _ in runner.clearReady() }
@@ -657,8 +655,36 @@ struct ContentView: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.secondary.opacity(0.12))
-        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .background(
+            RoundedRectangle(cornerRadius: 7)
+                .fill(Color.secondary.opacity(0.12))
+        )
+        .background(
+            RoundedRectangle(cornerRadius: 7)
+                .fill(Color(nsColor: .windowBackgroundColor))
+                .shadow(color: Color.black.opacity(0.28), radius: 10, y: 3)
+        )
+    }
+
+    @ViewBuilder
+    private var floatingBanners: some View {
+        // Empty when nothing is showing so the overlay doesn't steal clicks
+        // from Device / Format. Padding lives on this card stack, not the window.
+        if availableUpdate != nil || runner.outcome != nil {
+            VStack(alignment: .leading, spacing: 10) {
+                if let update = availableUpdate {
+                    updateBanner(update)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+                if let outcome = runner.outcome {
+                    OutcomeBanner(outcome: outcome)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .top)
+            .transition(.move(edge: .top).combined(with: .opacity))
+        }
     }
 
     private func checkForUpdatesOnce() {
@@ -773,9 +799,18 @@ private struct OutcomeBanner: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(color.opacity(0.14))
+        .background(
+            RoundedRectangle(cornerRadius: 7)
+                .fill(color.opacity(0.14))
+        )
+        .background(
+            RoundedRectangle(cornerRadius: 7)
+                .fill(Color(nsColor: .windowBackgroundColor))
+        )
         .overlay(RoundedRectangle(cornerRadius: 7).stroke(color.opacity(0.45)))
         .clipShape(RoundedRectangle(cornerRadius: 7))
+        .compositingGroup()
+        .shadow(color: Color.black.opacity(0.28), radius: 10, y: 3)
     }
 
     private var title: String {
