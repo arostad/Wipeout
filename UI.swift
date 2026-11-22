@@ -1,12 +1,17 @@
 import SwiftUI
 import AppKit
+import CoreText
 
 @main
 struct WipeoutApp: App {
     @StateObject private var updateInstall = UpdateInstallController()
 
+    init() {
+        Wordmark.registerBundledFont()
+    }
+
     var body: some Scene {
-        WindowGroup("Wipeout Drive Formatter") {
+        WindowGroup("wipeout Drive Formatter") {
             ContentView()
                 .environmentObject(updateInstall)
                 .frame(minWidth: 760, minHeight: 620)
@@ -15,7 +20,7 @@ struct WipeoutApp: App {
         .windowToolbarStyle(.unifiedCompact)
         .commands { AboutCommands() }
 
-        Window("About Wipeout", id: "about") {
+        Window("About wipeout", id: "about") {
             AboutView()
                 .environmentObject(updateInstall)
         }
@@ -29,7 +34,7 @@ private struct AboutCommands: Commands {
 
     var body: some Commands {
         CommandGroup(replacing: .appInfo) {
-            Button("About Wipeout") {
+            Button("About wipeout") {
                 openWindow(id: "about")
                 NSApplication.shared.activate(ignoringOtherApps: true)
             }
@@ -205,7 +210,32 @@ private struct UpdateInstallProgressView: View {
     }
 }
 
+/// About wordmark: bundled Plus Jakarta Sans SemiBold at 36 pt, −0.01em tracking.
+/// Falls back to the system semibold if the font is missing or failed to register.
+private enum Wordmark {
+    static let postScriptName = "PlusJakartaSans-SemiBold"
+    static let size: CGFloat = 36
+    static let tracking: CGFloat = -0.36
+
+    static func registerBundledFont() {
+        guard let url = Bundle.main.url(
+            forResource: "PlusJakartaSans-SemiBold",
+            withExtension: "ttf",
+            subdirectory: "Fonts"
+        ) else { return }
+        CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+    }
+
+    static var font: Font {
+        if NSFont(name: postScriptName, size: size) != nil {
+            return .custom(postScriptName, size: size)
+        }
+        return .system(size: size, weight: .semibold)
+    }
+}
+
 private struct AboutView: View {
+
     @EnvironmentObject private var updateInstall: UpdateInstallController
     @State private var status = ""
     @State private var checking = false
@@ -226,8 +256,9 @@ private struct AboutView: View {
                         .accessibilityHidden(true)
 
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Wipeout")
-                            .font(.largeTitle.bold())
+                        Text("wipeout")
+                            .font(Wordmark.font)
+                            .tracking(Wordmark.tracking)
                         Text("Version \(BuildInfo.version)")
                             .font(.headline)
                         Link("GitHub project page", destination: sourceURL)
@@ -254,7 +285,7 @@ private struct AboutView: View {
                 Toggle("Check for updates at launch (recommended)", isOn: $checkAtLaunch)
                     .toggleStyle(OrangeCheckboxStyle())
 
-                Text("Each update check sends one anonymous request to the Wipeout update server. It counts only the country the request came from, for a rough guesstimate of the app's popularity (or lack thereof) for my own curiosity. Your IP address is never stored, and no identifiers, cookies, or telemetry are used.")
+                Text("Each update check sends one anonymous request to the wipeout update server. It counts only the country the request came from, for a rough guesstimate of the app's popularity (or lack thereof) for my own curiosity. Your IP address is never stored, and no identifiers, cookies, or telemetry are used.")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

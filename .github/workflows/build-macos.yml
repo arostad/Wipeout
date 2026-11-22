@@ -59,7 +59,7 @@ jobs:
         with:
           tag_name: latest
           name: Latest
-          body: Apple Silicon build of Wipeout. This file is replaced on every push to main.
+          body: Apple Silicon build of wipeout. This file is replaced on every push to main.
           files: |
             Wipeout.app.zip
             Wipeout.app.zip.sha256
