@@ -22,9 +22,9 @@ App created by [Andy Rostad](https://github.com/arostad).  Released under the [M
 
 ## Download
 
-[**Download wipeout.zip**](https://github.com/arostad/Wipeout/releases/download/latest/Wipeout.app.zip)
+[**Download wipeout.zip**](https://github.com/arostad/Wipeout/releases/download/latest/wipeout.app.zip)
 
-Apple Silicon only. GitHub Actions rebuilds this download on every push to `main`. Unzip to get `Wipeout.app`.
+Apple Silicon only. GitHub Actions rebuilds this download on every push to `main`. Unzip to get `wipeout.app`.
 
 > wipeout destroys the selected disk. The Mac's boot disk is blocked.
 

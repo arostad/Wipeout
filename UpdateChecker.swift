@@ -35,11 +35,18 @@ private struct NumericVersion: Comparable {
 
 private enum UpdateError: LocalizedError {
     case message(String)
+    case httpStatus(Int)
 
     var errorDescription: String? {
         switch self {
         case .message(let message): return message
+        case .httpStatus(let code): return "The update server returned HTTP \(code)."
         }
+    }
+
+    var isNotFound: Bool {
+        if case .httpStatus(404) = self { return true }
+        return false
     }
 }
 
@@ -198,11 +205,18 @@ enum UpdateChecker {
         "https://wipeout-update-pings.dataspike.workers.dev/version.txt"
     private static let fallbackVersionURL =
         "https://github.com/arostad/Wipeout/releases/download/latest/version.txt"
+    /// Preferred assets (0.4.16+). The legacy names stay published so 0.4.15
+    /// and older updaters can still download and verify an update.
     private static let zipURL =
-        "https://github.com/arostad/Wipeout/releases/download/latest/Wipeout.app.zip"
+        "https://github.com/arostad/Wipeout/releases/download/latest/wipeout.app.zip"
     private static let checksumURL =
+        "https://github.com/arostad/Wipeout/releases/download/latest/wipeout.app.zip.sha256"
+    private static let zipFileName = "wipeout.app.zip"
+    private static let legacyZipURL =
+        "https://github.com/arostad/Wipeout/releases/download/latest/Wipeout.app.zip"
+    private static let legacyChecksumURL =
         "https://github.com/arostad/Wipeout/releases/download/latest/Wipeout.app.zip.sha256"
-    private static let zipFileName = "Wipeout.app.zip"
+    private static let legacyZipFileName = "Wipeout.app.zip"
     private static let minimumZipBytes: Int64 = 100_000
     private static let maximumZipBytes: Int64 = 500_000_000
     private static let maximumSmallResponseBytes: Int64 = 1_024
@@ -258,7 +272,7 @@ enum UpdateChecker {
         let identifier = UUID().uuidString.lowercased()
         let (zip, expectedHash) = try await downloadVerifiedZip(to: parent, progress: progress)
         let pendingRoot = parent.appendingPathComponent(".Wipeout-update-\(identifier).new", isDirectory: true)
-        let candidate = pendingRoot.appendingPathComponent("Wipeout.app", isDirectory: true)
+        let destination = parent.appendingPathComponent("wipeout.app", isDirectory: true).standardizedFileURL
 
         do {
             try FileManager.default.createDirectory(
@@ -267,11 +281,7 @@ enum UpdateChecker {
                 attributes: [.posixPermissions: 0o700]
             )
             try extract(zip: zip, to: pendingRoot)
-            var isDirectory: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: candidate.path, isDirectory: &isDirectory),
-                  isDirectory.boolValue else {
-                throw UpdateError.message("The downloaded update did not contain Wipeout.app.")
-            }
+            let candidate = try findPackedApp(in: pendingRoot)
 
             try startReplacementHelper(
                 zip: zip,
@@ -279,6 +289,7 @@ enum UpdateChecker {
                 pendingRoot: pendingRoot,
                 candidate: candidate,
                 target: target,
+                destination: destination,
                 identifier: identifier
             )
         } catch {
@@ -353,7 +364,7 @@ enum UpdateChecker {
             }
 
             guard (200...299).contains(response.statusCode) else {
-                throw UpdateError.message("The update server returned HTTP \(response.statusCode).")
+                throw UpdateError.httpStatus(response.statusCode)
             }
             return body
         }
@@ -386,19 +397,21 @@ enum UpdateChecker {
             }
 
             guard (200...299).contains(response.statusCode) else {
-                throw UpdateError.message("The update server returned HTTP \(response.statusCode).")
+                throw UpdateError.httpStatus(response.statusCode)
             }
             return Int64(try output.offset() - startingOffset)
         }
         throw UpdateError.message("The download used too many redirects.")
     }
 
-    private static func readChecksum() async throws -> String {
-        let data = try await getSmall(checksumURL)
+    private static func readChecksum(from url: String) async throws -> String {
+        let data = try await getSmall(url)
         guard let text = String(data: data, encoding: .ascii) else {
             throw UpdateError.message("The update checksum was not readable.")
         }
-        let pattern = #"^([0-9a-fA-F]{64})(?:(?:  | \*)Wipeout\.app\.zip)?\s*$"#
+        // Accept hash-only sidecars, or GNU "hash  filename" / "hash *filename"
+        // for either wipeout.app.zip or the legacy Wipeout.app.zip name.
+        let pattern = #"^([0-9a-fA-F]{64})(?:(?:  | \*)[Ww]ipeout\.app\.zip)?\s*$"#
         let range = NSRange(text.startIndex..<text.endIndex, in: text)
         guard let regex = try? NSRegularExpression(pattern: pattern),
               let match = regex.firstMatch(in: text, range: range),
@@ -421,8 +434,34 @@ enum UpdateChecker {
         to directory: URL,
         progress: UpdateInstallProgressHandler? = nil
     ) async throws -> (URL, String) {
+        do {
+            return try await downloadVerifiedZip(
+                to: directory,
+                zipURL: zipURL,
+                checksumURL: checksumURL,
+                zipFileName: zipFileName,
+                progress: progress
+            )
+        } catch let error as UpdateError where error.isNotFound {
+            return try await downloadVerifiedZip(
+                to: directory,
+                zipURL: legacyZipURL,
+                checksumURL: legacyChecksumURL,
+                zipFileName: legacyZipFileName,
+                progress: progress
+            )
+        }
+    }
+
+    private static func downloadVerifiedZip(
+        to directory: URL,
+        zipURL: String,
+        checksumURL: String,
+        zipFileName: String,
+        progress: UpdateInstallProgressHandler? = nil
+    ) async throws -> (URL, String) {
         for attempt in 0..<2 {
-            let expectedHash = try await readChecksum()
+            let expectedHash = try await readChecksum(from: checksumURL)
             let pending = directory.appendingPathComponent(
                 ".\(zipFileName).\(UUID().uuidString.lowercased()).new"
             )
@@ -468,6 +507,26 @@ enum UpdateChecker {
         throw UpdateError.message("The downloaded update did not match its checksum. The update was not installed.")
     }
 
+    /// Accept either wipeout.app or Wipeout.app from the unpacked zip.
+    private static func findPackedApp(in directory: URL) throws -> URL {
+        let items = try FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: []
+        )
+        let matches = items.filter { url in
+            url.pathExtension.lowercased() == "app"
+                && url.deletingPathExtension().lastPathComponent.lowercased() == "wipeout"
+        }
+        guard !matches.isEmpty else {
+            throw UpdateError.message("The downloaded update did not contain wipeout.app.")
+        }
+        if let exact = matches.first(where: { $0.lastPathComponent == "wipeout.app" }) {
+            return exact
+        }
+        return matches[0]
+    }
+
     private static func sha256(of url: URL) throws -> String {
         let input = try FileHandle(forReadingFrom: url)
         defer { try? input.close() }
@@ -502,6 +561,7 @@ enum UpdateChecker {
         pendingRoot: URL,
         candidate: URL,
         target: URL,
+        destination: URL,
         identifier: String
     ) throws {
         let parent = target.deletingLastPathComponent()
@@ -538,13 +598,31 @@ enum UpdateChecker {
 
         /bin/mv "$WIPEOUT_TARGET" "$WIPEOUT_BACKUP" 2>/dev/null ||
           fail_update "The installed application could not be moved."
-        if ! /bin/mv "$WIPEOUT_CANDIDATE" "$WIPEOUT_TARGET" 2>/dev/null; then
-          /bin/mv "$WIPEOUT_BACKUP" "$WIPEOUT_TARGET" 2>/dev/null || true
-          fail_update "The new application could not be installed."
+
+        # Install as wipeout.app in the same folder. On case-insensitive APFS,
+        # Wipeout.app and wipeout.app share one directory entry; moving the
+        # running bundle to the backup name first frees that entry. If a
+        # case-only rename is still needed, go through a temporary name.
+        if ! /bin/mv "$WIPEOUT_CANDIDATE" "$WIPEOUT_DESTINATION" 2>/dev/null; then
+          tmp="${WIPEOUT_DESTINATION}.renaming-$$"
+          if ! /bin/mv "$WIPEOUT_CANDIDATE" "$tmp" 2>/dev/null; then
+            /bin/mv "$WIPEOUT_BACKUP" "$WIPEOUT_TARGET" 2>/dev/null || true
+            fail_update "The new application could not be installed."
+          fi
+          if [ -e "$WIPEOUT_DESTINATION" ]; then
+            /bin/rm -rf "$tmp" 2>/dev/null || true
+            /bin/mv "$WIPEOUT_BACKUP" "$WIPEOUT_TARGET" 2>/dev/null || true
+            fail_update "The new application could not be installed."
+          fi
+          if ! /bin/mv "$tmp" "$WIPEOUT_DESTINATION" 2>/dev/null; then
+            /bin/rm -rf "$tmp" 2>/dev/null || true
+            /bin/mv "$WIPEOUT_BACKUP" "$WIPEOUT_TARGET" 2>/dev/null || true
+            fail_update "The new application could not be installed."
+          fi
         fi
 
-        if ! /usr/bin/open "$WIPEOUT_TARGET" >/dev/null 2>&1; then
-          /bin/rm -rf "$WIPEOUT_TARGET" 2>/dev/null || true
+        if ! /usr/bin/open "$WIPEOUT_DESTINATION" >/dev/null 2>&1; then
+          /bin/rm -rf "$WIPEOUT_DESTINATION" 2>/dev/null || true
           /bin/mv "$WIPEOUT_BACKUP" "$WIPEOUT_TARGET" 2>/dev/null || true
           fail_update "The updated application could not be opened."
         fi
@@ -579,6 +657,7 @@ enum UpdateChecker {
         environment["WIPEOUT_PENDING_ROOT"] = pendingRoot.path
         environment["WIPEOUT_CANDIDATE"] = candidate.path
         environment["WIPEOUT_TARGET"] = target.path
+        environment["WIPEOUT_DESTINATION"] = destination.path
         environment["WIPEOUT_BACKUP"] = backup.path
         environment["WIPEOUT_ERROR"] = errorFile.path
         environment["WIPEOUT_PID"] = String(ProcessInfo.processInfo.processIdentifier)
