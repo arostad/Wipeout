@@ -431,9 +431,16 @@ struct ContentView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Picker("", selection: $fs) {
                             ForEach(FSChoice.allCases) { choice in
-                                Text(choice.title)
-                                    .foregroundColor(choice == .ntfs && !ntfsAvailable ? .secondary : .primary)
-                                    .tag(choice)
+                                if choice == .ntfs && !ntfsAvailable {
+                                    Text("NTFS — needs Paragon or Tuxera")
+                                        .foregroundColor(.secondary)
+                                        .help("NTFS needs Paragon NTFS or Tuxera NTFS for Mac installed")
+                                        .tag(choice)
+                                        .disabled(true)
+                                } else {
+                                    Text(choice.title)
+                                        .tag(choice)
+                                }
                             }
                         }
                         .labelsHidden()
@@ -444,7 +451,10 @@ struct ContentView: View {
                                 volumeName = newValue.defaultLabel
                             }
                         }
-                        if !ntfsAvailable {
+                        // Only if NTFS is the current selection without a driver; otherwise
+                        // the disabled menu item carries the hint and this line stays gone
+                        // so the layout under the picker does not shift.
+                        if fs == .ntfs && !ntfsAvailable {
                             Text("NTFS needs Paragon NTFS or Tuxera NTFS for Mac installed")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
