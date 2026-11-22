@@ -5,17 +5,20 @@ import Foundation
 enum FSChoice: String, CaseIterable, Identifiable {
     case exfat
     case fat32
+    case ntfs
     case hfsPlus
     case apfs
     case uefiShell
 
     var id: String { rawValue }
 
-    /// Label shown in the picker.
+    /// Label shown in the picker. The NTFS row stays in the list even when no
+    /// third-party formatter is installed; the UI greys it out and explains why.
     var title: String {
         switch self {
         case .exfat:   return "ExFAT — MBR (Windows / macOS / Linux, >32 GB)"
         case .fat32:   return "FAT32 — MBR (firmware, BIOS, embedded)"
+        case .ntfs:    return "NTFS — MBR (Windows)"
         case .hfsPlus: return "Mac OS Extended (Journaled) — GPT"
         case .apfs:    return "APFS — GPT (macOS only)"
         case .uefiShell: return "UEFI shell — FAT32 / MBR (bootable, adds Update folder)"
@@ -23,19 +26,30 @@ enum FSChoice: String, CaseIterable, Identifiable {
     }
 
     /// Format token passed to `diskutil partitionDisk`.
+    /// For NTFS, callers must pass the detected third-party personality instead
+    /// (see `diskutilType(ntfsPersonality:)`). The built-in "NTFS" personality
+    /// is not formattable on macOS.
     var fsArg: String {
         switch self {
         case .exfat:   return "ExFAT"
         case .fat32:   return "MS-DOS FAT32"
+        case .ntfs:    return "NTFS"
         case .hfsPlus: return "JHFS+"
         case .apfs:    return "APFS"
         case .uefiShell: return "MS-DOS FAT32"
         }
     }
 
+    /// Token actually handed to diskutil. For NTFS this is the detected
+    /// personality (`UFSD_NTFS` or `Tuxera NTFS`), never Apple's `NTFS`.
+    func diskutilType(ntfsPersonality: String?) -> String {
+        if self == .ntfs { return ntfsPersonality ?? fsArg }
+        return fsArg
+    }
+
     var scheme: String {
         switch self {
-        case .exfat, .fat32, .uefiShell: return "MBR"
+        case .exfat, .fat32, .ntfs, .uefiShell: return "MBR"
         case .hfsPlus, .apfs: return "GPT"
         }
     }
@@ -47,13 +61,188 @@ enum FSChoice: String, CaseIterable, Identifiable {
     var requiresShortUppercaseName: Bool {
         switch self {
         case .exfat, .fat32, .uefiShell: return true
-        case .hfsPlus, .apfs: return false
+        case .ntfs, .hfsPlus, .apfs: return false
+        }
+    }
+
+    /// NTFS volume labels are up to 32 characters. HFS+/APFS keep the existing 24.
+    var maxLabelLength: Int {
+        switch self {
+        case .exfat, .fat32, .uefiShell: return 11
+        case .ntfs: return 32
+        case .hfsPlus, .apfs: return 24
         }
     }
 
     var isUefiShell: Bool { self == .uefiShell }
 
     var defaultLabel: String { self == .uefiShell ? "UEFISHELL" : "USB" }
+}
+
+// MARK: - Third-party NTFS formatter detection
+
+/// Looks for a formattable NTFS personality registered by Paragon or Tuxera.
+/// If both are installed, Paragon (`UFSD_NTFS`) wins. Apple's built-in `NTFS`
+/// personality is ignored: macOS can read it but cannot format it.
+enum NTFSFilesystemProbe {
+
+    struct Match: Equatable {
+        enum Vendor: String {
+            case paragon
+            case tuxera
+        }
+        let vendor: Vendor
+        /// Exact diskutil personality string, e.g. `UFSD_NTFS` or `Tuxera NTFS`.
+        let personality: String
+        var displayName: String { vendor == .paragon ? "Paragon" : "Tuxera" }
+    }
+
+    static func detect() -> Match? {
+        let plistRun = shell("/usr/sbin/diskutil", ["listFilesystems", "-plist"])
+        if plistRun.status == 0 {
+            switch parsePlist(plistRun.out) {
+            case .invalid:
+                break
+            case .none:
+                return nil
+            case .found(let match):
+                return match
+            }
+        }
+        let textRun = shell("/usr/sbin/diskutil", ["listFilesystems"])
+        let text = (String(data: textRun.out, encoding: .utf8) ?? "") + "\n" + textRun.err
+        return parseText(text)
+    }
+
+    enum Result {
+        case invalid
+        case none
+        case found(Match)
+    }
+
+    static func parsePlist(_ data: Data) -> Result {
+        guard let obj = try? PropertyListSerialization.propertyList(from: data, format: nil) else {
+            return .invalid
+        }
+        let entries: [[String: Any]]
+        if let root = obj as? [String: Any],
+           let arr = root["AllFilesystems"] as? [[String: Any]] {
+            entries = arr
+        } else if let arr = obj as? [[String: Any]] {
+            entries = arr
+        } else {
+            return .invalid
+        }
+
+        var paragon: Match?
+        var tuxera: Match?
+        for entry in entries {
+            let personality = stringValue(entry["Personality"])
+                ?? stringValue(entry["Name"])
+                ?? ""
+            let canFormat = boolish(entry["CanFormat"])
+            guard let match = classify(personality: personality, canFormat: canFormat) else { continue }
+            switch match.vendor {
+            case .paragon: if paragon == nil { paragon = match }
+            case .tuxera:  if tuxera == nil { tuxera = match }
+            }
+        }
+        if let paragon { return .found(paragon) }
+        if let tuxera { return .found(tuxera) }
+        return .none
+    }
+
+    static func parseText(_ text: String) -> Match? {
+        var paragon: Match?
+        var tuxera: Match?
+        var current: String?
+        var canFormat: Bool?
+
+        func flush() {
+            guard let personality = current else { return }
+            if let match = classify(personality: personality, canFormat: canFormat) {
+                switch match.vendor {
+                case .paragon: if paragon == nil { paragon = match }
+                case .tuxera:  if tuxera == nil { tuxera = match }
+                }
+            }
+            current = nil
+            canFormat = nil
+        }
+
+        for raw in text.components(separatedBy: .newlines) {
+            let trimmed = raw.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty { continue }
+            let indented = raw.first?.isWhitespace == true
+            let lower = trimmed.lowercased()
+            if !indented && looksLikePersonalityHeader(trimmed) {
+                flush()
+                current = trimmed
+                canFormat = nil
+                continue
+            }
+            if lower.contains("can format") {
+                if lower.contains("yes") || lower.hasSuffix("true") { canFormat = true }
+                else if lower.contains("no") || lower.hasSuffix("false") { canFormat = false }
+            }
+            if lower.contains("cannot be used for formatting")
+                || lower.contains("formatting is not supported") {
+                canFormat = false
+            }
+        }
+        flush()
+        return paragon ?? tuxera
+    }
+
+    /// Matches only Paragon / Tuxera personalities that can format.
+    /// Never accepts Apple's built-in `NTFS` personality.
+    static func classify(personality: String, canFormat: Bool?) -> Match? {
+        let name = personality.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return nil }
+        if name.compare("NTFS", options: .caseInsensitive) == .orderedSame { return nil }
+
+        let folded = name.lowercased()
+        let isParagon = name.compare("UFSD_NTFS", options: .caseInsensitive) == .orderedSame
+            || (folded.contains("ufsd") && folded.contains("ntfs"))
+        let isTuxera = name.compare("Tuxera NTFS", options: .caseInsensitive) == .orderedSame
+            || (folded.contains("tuxera") && folded.contains("ntfs"))
+        guard isParagon || isTuxera else { return nil }
+        if let canFormat, !canFormat { return nil }
+        if isParagon { return Match(vendor: .paragon, personality: name) }
+        return Match(vendor: .tuxera, personality: name)
+    }
+
+    private static func looksLikePersonalityHeader(_ line: String) -> Bool {
+        if line.hasPrefix("-") { return false }
+        let lower = line.lowercased()
+        let skipPrefixes = [
+            "personalit", "formattable", "these file", "these are",
+            "file system types", "available:", "----"
+        ]
+        if skipPrefixes.contains(where: { lower.hasPrefix($0) }) { return false }
+        if lower.hasPrefix("used for") || lower.hasPrefix("type:") { return false }
+        if lower.hasPrefix("can format") || lower.hasPrefix("supports") { return false }
+        return true
+    }
+
+    private static func stringValue(_ value: Any?) -> String? {
+        if let s = value as? String {
+            let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+            return t.isEmpty ? nil : t
+        }
+        return nil
+    }
+
+    private static func boolish(_ value: Any?) -> Bool? {
+        if let b = value as? Bool { return b }
+        if let n = value as? NSNumber { return n.boolValue }
+        if let s = value as? String {
+            let t = s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if ["yes", "true", "1"].contains(t) { return true }
+            if ["no", "false", "0"].contains(t) { return false }
+        }
+        return nil
+    }
 }
 
 // MARK: - Console model
@@ -96,6 +285,9 @@ final class FormatRunner: ObservableObject {
     /// format ran with, so the UI can offer Eject until the user changes something.
     @Published private(set) var readyDisk: Disk? = nil
     @Published private(set) var readyKey: String? = nil
+    /// Set by `refreshNTFSSupport()`. The diskutil personality to use when
+    /// formatting NTFS, or nil if Paragon / Tuxera is not installed.
+    @Published private(set) var ntfsFormatter: NTFSFilesystemProbe.Match? = nil
 
     private var pendingStageLabel: String? = nil
     private var tailTimer: Timer?
@@ -154,6 +346,15 @@ final class FormatRunner: ObservableObject {
         if case .success = outcome { outcome = nil }
     }
 
+    /// Re-probe `diskutil listFilesystems` for a formattable Paragon or Tuxera
+    /// NTFS personality. Called at launch and whenever the disk list is rescanned.
+    func refreshNTFSSupport() {
+        let found = NTFSFilesystemProbe.detect()
+        if found != ntfsFormatter {
+            ntfsFormatter = found
+        }
+    }
+
     func start(disk: Disk, fs: FSChoice, volumeName: String, dryRun: Bool, deepWipe: Bool,
                schemeOverride: String? = nil, settingsKey: String = "") {
         guard !isRunning else { return }
@@ -164,6 +365,11 @@ final class FormatRunner: ObservableObject {
 
         if fs.isUefiShell && FormatRunner.shellBinaryURL() == nil {
             emit(.error, "Refused: Shell.efi not found. Put it at \(FormatRunner.shellBinaryHint) and try again.")
+            return
+        }
+
+        if fs == .ntfs && ntfsFormatter == nil {
+            emit(.error, "NTFS needs Paragon NTFS or Tuxera NTFS for Mac installed.")
             return
         }
 
@@ -180,7 +386,8 @@ final class FormatRunner: ObservableObject {
                                            dryRun: dryRun,
                                            deepWipe: deepWipe,
                                            scheme: scheme,
-                                           logPath: logFileURL.path)
+                                           logPath: logFileURL.path,
+                                           filesystemType: fs.diskutilType(ntfsPersonality: ntfsFormatter?.personality))
         do {
             try body.write(to: scriptURL, atomically: true, encoding: .utf8)
             FileManager.default.createFile(atPath: logFileURL.path, contents: nil)
@@ -468,6 +675,7 @@ final class FormatRunner: ObservableObject {
         switch fs {
         case .exfat: return "exFAT"
         case .fat32, .uefiShell: return "FAT32"
+        case .ntfs: return "NTFS"
         case .hfsPlus: return "Mac OS Extended"
         case .apfs: return "APFS"
         }
@@ -480,15 +688,15 @@ final class FormatRunner: ObservableObject {
         if s.isEmpty { s = "UNTITLED" }
         if fs.requiresShortUppercaseName {
             s = s.uppercased()
-            if s.count > 11 { s = String(s.prefix(11)) }
-        } else if s.count > 24 {
-            s = String(s.prefix(24))
         }
+        let limit = fs.maxLabelLength
+        if s.count > limit { s = String(s.prefix(limit)) }
         return s
     }
 
-    static func scriptBody(disk: Disk, fs: FSChoice, volumeName: String, dryRun: Bool, deepWipe: Bool, scheme: String, logPath: String) -> String {
+    static func scriptBody(disk: Disk, fs: FSChoice, volumeName: String, dryRun: Bool, deepWipe: Bool, scheme: String, logPath: String, filesystemType: String? = nil) -> String {
         let dry = dryRun ? "1" : "0"
+        let fstype = shellDoubleQuoted(filesystemType ?? fs.diskutilType(ntfsPersonality: nil))
         let ntfsNote = (fs == .exfat && scheme == "MBR")
             ? "@@INFO Note: exFAT on MBR shows as Windows_NTFS in the table above. That is expected; both use partition type 0x07."
             : ""
@@ -503,7 +711,7 @@ final class FormatRunner: ObservableObject {
         DISK="\(disk.devNode)"
         NAME="\(disk.id)"
         SCHEME="\(scheme)"
-        FSTYPE="\(fs.fsArg)"
+        FSTYPE="\(fstype)"
         FRIENDLY="\(friendlyFS(fs))"
         VOLNAME="\(volumeName)"
         SIZE=\(disk.sizeBytes)
@@ -567,5 +775,14 @@ final class FormatRunner: ObservableObject {
         \(ntfsNote)
         exit 0
         """
+    }
+
+    /// Escape a value interpolated into a double-quoted bash assignment.
+    private static func shellDoubleQuoted(_ raw: String) -> String {
+        raw
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "$", with: "\\$")
+            .replacingOccurrences(of: "`", with: "\\`")
     }
 }

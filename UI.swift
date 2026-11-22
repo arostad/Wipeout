@@ -197,8 +197,10 @@ struct ContentView: View {
 
     /// Everything that defines a format job. Changing any of it drops the Eject state.
     private var settingsKey: String {
-        "\(selectedID)|\(fs.rawValue)|\(FormatRunner.sanitize(volumeName, for: fs))|\(uefiScheme)|\(deepWipe)|\(dryRun)"
+        "\(selectedID)|\(fs.rawValue)|\(runner.ntfsFormatter?.personality ?? "")|\(FormatRunner.sanitize(volumeName, for: fs))|\(uefiScheme)|\(deepWipe)|\(dryRun)"
     }
+
+    private var ntfsAvailable: Bool { runner.ntfsFormatter != nil }
 
     /// The drive just formatted with the current settings, ready to eject.
     private var ejectTarget: Disk? {
@@ -223,6 +225,7 @@ struct ContentView: View {
     private var canFormat: Bool {
         guard let d = selected else { return false }
         if fs.isUefiShell && FormatRunner.shellBinaryURL() == nil { return false }
+        if fs == .ntfs && !ntfsAvailable { return false }
         return !runner.isRunning && !d.isBootDisk
     }
 
@@ -278,17 +281,26 @@ struct ContentView: View {
                 Text("Format").font(.headline)
 
                 LabeledRow("Filesystem") {
-                    Picker("", selection: $fs) {
-                        ForEach(FSChoice.allCases) { choice in
-                            Text(choice.title).tag(choice)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Picker("", selection: $fs) {
+                            ForEach(FSChoice.allCases) { choice in
+                                Text(choice.title)
+                                    .foregroundColor(choice == .ntfs && !ntfsAvailable ? .secondary : .primary)
+                                    .tag(choice)
+                            }
                         }
-                    }
-                    .labelsHidden()
-                    .fixedSize()
-                    .disabled(runner.isRunning)
-                    .onChange(of: fs) { newValue in
-                        if volumeName.isEmpty || FSChoice.allCases.contains(where: { $0.defaultLabel == volumeName }) {
-                            volumeName = newValue.defaultLabel
+                        .labelsHidden()
+                        .fixedSize()
+                        .disabled(runner.isRunning)
+                        .onChange(of: fs) { newValue in
+                            if volumeName.isEmpty || FSChoice.allCases.contains(where: { $0.defaultLabel == volumeName }) {
+                                volumeName = newValue.defaultLabel
+                            }
+                        }
+                        if !ntfsAvailable {
+                            Text("NTFS needs Paragon NTFS or Tuxera NTFS for Mac installed")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
                         }
                     }
                 }
@@ -458,7 +470,7 @@ struct ContentView: View {
                 \(d.mediaName) — \(d.sizeString)
                 Volumes: \(d.volumeSummary)
 
-                Every partition on this device will be destroyed and replaced with one \(fs.fsArg) partition named \(FormatRunner.sanitize(volumeName, for: fs)) on \(fs.allowsSchemeOverride ? uefiScheme : fs.scheme).\(deepWipe ? "\n\nDeep wipe is on: \(deepWipeEstimate)" : "")
+                Every partition on this device will be destroyed and replaced with one \(fs.diskutilType(ntfsPersonality: runner.ntfsFormatter?.personality)) partition named \(FormatRunner.sanitize(volumeName, for: fs)) on \(fs.allowsSchemeOverride ? uefiScheme : fs.scheme).\(deepWipe ? "\n\nDeep wipe is on: \(deepWipeEstimate)" : "")
                 """)
             }
         }
@@ -523,6 +535,7 @@ struct ContentView: View {
     }
 
     private func rescan() {
+        runner.refreshNTFSSupport()
         let found = DiskScanner.scan()
         disks = found
         let visible = found.filter { showInternal || !$0.isInternal }

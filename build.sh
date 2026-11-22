@@ -7,7 +7,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 # ==============================================================
-VERSION="0.3.11"     # <-- BUMP THIS each change
+VERSION="0.4.10"     # <-- BUMP THIS each change
 #   patch +1  small change or fix
 #   minor +1  new feature, reset patch to 10
 # ==============================================================
