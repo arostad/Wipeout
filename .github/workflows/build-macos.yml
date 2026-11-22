@@ -116,26 +116,82 @@ jobs:
         with:
           name: wipeout-macOS-arm64
 
-      - name: Rename zips to published names
+      # GitHub Release asset names and /releases/download/latest/ URLs are
+      # case-insensitive, so wipeout.app.zip and Wipeout.app.zip cannot both
+      # exist as distinct assets (0.4.16's dual upload failed and broke
+      # checksums). Publish only the legacy-compatible pair. GitHub serves
+      # those same bytes under the lowercase names, so 0.4.16+ updaters
+      # (lowercase URL, accept either bundle name, [Ww]ipeout sidecar) and
+      # older updaters (Wipeout.app.zip, top-level Wipeout.app, sidecar
+      # naming Wipeout.app.zip) both keep working.
+      - name: Stage the published zip pair
         run: |
           set -euo pipefail
-          # Ubuntu is case-sensitive, so both official names can exist here.
-          mv current-wipeout.app.zip wipeout.app.zip
-          mv current-wipeout.app.zip.sha256 wipeout.app.zip.sha256
           mv legacy-Wipeout.app.zip Wipeout.app.zip
           mv legacy-Wipeout.app.zip.sha256 Wipeout.app.zip.sha256
-          ls -l wipeout.app.zip Wipeout.app.zip wipeout.app.zip.sha256 Wipeout.app.zip.sha256 version.txt
+          python3 - <<'PY'
+          import hashlib, plistlib, zipfile
+          from pathlib import Path
+          zpath = Path("Wipeout.app.zip")
+          sidecar = Path("Wipeout.app.zip.sha256")
+          zf = zipfile.ZipFile(zpath)
+          tops = {n.split("/")[0] for n in zf.namelist()}
+          assert tops == {"Wipeout.app"}, tops
+          assert "Wipeout.app/Contents/MacOS/wipeout" in zf.namelist()
+          plist = plistlib.loads(zf.read("Wipeout.app/Contents/Info.plist"))
+          assert plist.get("CFBundleExecutable") == "wipeout"
+          assert plist.get("CFBundleShortVersionString") == Path("version.txt").read_text()
+          actual = hashlib.sha256(zpath.read_bytes()).hexdigest()
+          parts = sidecar.read_text().strip().split()
+          assert parts[0].lower() == actual, (parts[0], actual)
+          assert parts[-1] == "Wipeout.app.zip", parts
+          print(f"ok publish pair: top=Wipeout.app size={zpath.stat().st_size} sha256={actual}")
+          PY
+          # Keep the current-named zip out of the upload set.
+          rm -f current-wipeout.app.zip current-wipeout.app.zip.sha256
+          ls -l Wipeout.app.zip Wipeout.app.zip.sha256 version.txt
+
+      - name: Remove colliding latest assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Idempotent: delete any existing asset whose name case-insensitively
+          # matches a file we are about to upload. A leftover
+          # wipeout.app.zip.sha256 would 422 a Wipeout.app.zip.sha256 upload.
+          if ! gh api "repos/${GITHUB_REPOSITORY}/releases/tags/latest" >/tmp/latest-release.json 2>/tmp/latest-release.err; then
+            echo "No latest release yet (or lookup failed); upload will create it."
+            cat /tmp/latest-release.err || true
+            exit 0
+          fi
+          python3 - <<'PY'
+          import json, os, subprocess, sys
+          data = json.loads(open("/tmp/latest-release.json").read())
+          wanted = {"wipeout.app.zip", "wipeout.app.zip.sha256", "version.txt"}
+          for asset in data.get("assets") or []:
+              name = asset.get("name") or ""
+              if name.lower() not in wanted:
+                  continue
+              aid = asset["id"]
+              print(f"deleting existing asset {name} (id {aid})")
+              r = subprocess.run(
+                  ["gh", "api", "--method", "DELETE",
+                   f"repos/{os.environ['GITHUB_REPOSITORY']}/releases/assets/{aid}"],
+                  check=False,
+              )
+              if r.returncode != 0:
+                  sys.exit(f"failed to delete asset {name} ({aid})")
+          PY
 
       - name: Publish latest release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: latest
           name: Latest
-          body: Apple Silicon build of wipeout. This file is replaced on every push to main. The lowercase wipeout.app.zip is the current download; Wipeout.app.zip is kept so older in-app updaters still work.
+          body: Apple Silicon build of wipeout. This file is replaced on every push to main. The published archive is Wipeout.app.zip (top-level Wipeout.app) so 0.4.15 and older in-app updaters keep working. GitHub serves the same file at wipeout.app.zip, which 0.4.16 and later updaters request.
           files: |
-            wipeout.app.zip
-            wipeout.app.zip.sha256
             Wipeout.app.zip
             Wipeout.app.zip.sha256
             version.txt
+          overwrite_files: true
           make_latest: true

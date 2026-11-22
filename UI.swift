@@ -14,8 +14,9 @@ struct WipeoutApp: App {
         WindowGroup("wipeout Drive Formatter") {
             ContentView()
                 .environmentObject(updateInstall)
-                .frame(minWidth: 760, minHeight: 620)
+                .frame(minWidth: MainWindowMetrics.minWidth, minHeight: MainWindowMetrics.minHeight)
         }
+        .defaultSize(width: MainWindowMetrics.minWidth, height: MainWindowMetrics.minHeight)
         .windowResizability(.contentMinSize)
         .windowToolbarStyle(.unifiedCompact)
         .commands { AboutCommands() }
@@ -38,6 +39,45 @@ private struct AboutCommands: Commands {
                 openWindow(id: "about")
                 NSApplication.shared.activate(ignoringOtherApps: true)
             }
+        }
+    }
+}
+
+/// Main window size. 0.4.16 was 760×620. The green Drive ready (or other
+/// outcome) banner sits under the Console header and consumes
+/// `outcomeBannerHeight` plus one extra `ContentView` stack spacing, which
+/// had been shrinking the console and clipping its bottom edge. The window
+/// does not auto-resize when the banner or update popover appears; instead
+/// the default and minimum height include that room up front.
+private enum MainWindowMetrics {
+    static let minWidth: CGFloat = 760
+    static let legacyMinHeight: CGFloat = 620
+    /// Typical OutcomeBanner: 8 pt padding + 16 pt headline line + 2 pt
+    /// inner stack spacing + 16 pt callout line + 8 pt padding.
+    static let outcomeBannerHeight: CGFloat = 50
+    /// Extra VStack spacing when the banner is inserted between the Console
+    /// header and the console (`ContentView` uses spacing 14).
+    static let outcomeBannerSpacing: CGFloat = 14
+    static let minHeight: CGFloat = legacyMinHeight + outcomeBannerHeight + outcomeBannerSpacing
+
+    /// Existing installs may have a saved frame at the old 620 pt content
+    /// height. Raise those (and anything else below the new default) so the
+    /// taller minimum actually takes effect. Larger frames are left alone.
+    /// The title-bar stays put; the window grows downward.
+    static func raiseSavedFrameIfNeeded() {
+        for window in NSApp.windows {
+            guard window.isVisible, !window.isSheet, window.canBecomeMain else { continue }
+            if window.title.hasPrefix("About") { continue }
+            let isFormatter = window.title.contains("Drive Formatter")
+                || (window.title.isEmpty && window.styleMask.contains(.resizable))
+            guard isFormatter else { continue }
+            let layoutHeight = window.contentLayoutRect.height
+            let deficit = minHeight - layoutHeight
+            guard deficit > 0.5 else { continue }
+            var frame = window.frame
+            frame.size.height += deficit
+            frame.origin.y -= deficit
+            window.setFrame(frame, display: true)
         }
     }
 }
@@ -643,20 +683,32 @@ struct ContentView: View {
             // put when the update button appears or disappears. The button itself
             // is only shown when an update is available.
             ToolbarItem(placement: .primaryAction) {
-                if let update = availableUpdate {
-                    Button("Update to \(update.remoteVersion)") {
-                        showingUpdatePopover = true
+                Group {
+                    if let update = availableUpdate {
+                        Button {
+                            showingUpdatePopover = true
+                        } label: {
+                            Label {
+                                Text("Update")
+                            } icon: {
+                                Image(systemName: "arrow.down.circle")
+                                    .foregroundStyle(Color.wipeoutAccent)
+                            }
+                        }
+                        .labelStyle(.titleAndIcon)
+                        .help("Version \(update.remoteVersion) is available (you have \(BuildInfo.version)).")
+                        .popover(isPresented: $showingUpdatePopover, arrowEdge: .bottom) {
+                            updatePopover(update)
+                        }
+                    } else {
+                        Color.clear
+                            .frame(width: 0, height: 0)
+                            .accessibilityHidden(true)
                     }
-                    .buttonStyle(CompactUpdateToolbarButtonStyle())
-                    .help("You have \(BuildInfo.version)")
-                    .popover(isPresented: $showingUpdatePopover, arrowEdge: .bottom) {
-                        updatePopover(update)
-                    }
-                } else {
-                    Color.clear
-                        .frame(width: 0, height: 0)
-                        .accessibilityHidden(true)
                 }
+                // Keep a standard toolbar inset from the trailing edge;
+                // the 0.4.14 filled pill sat flush against it.
+                .padding(.trailing, 10)
             }
         }
         .onChange(of: showingUpdatePopover) { open in
@@ -675,9 +727,11 @@ struct ContentView: View {
         .onAppear {
             rescan()
             checkForUpdatesOnce()
+            MainWindowMetrics.raiseSavedFrameIfNeeded()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 labelFocused = false
                 for w in NSApp.windows where w.isVisible { w.makeFirstResponder(nil) }
+                MainWindowMetrics.raiseSavedFrameIfNeeded()
             }
         }
         .alert("Erase \(selected?.devNode ?? "")?", isPresented: $confirming) {
@@ -930,27 +984,6 @@ struct PrimaryButtonStyle: ButtonStyle {
                 .opacity(isEnabled ? 1 : 0.45)
                 .contentShape(RoundedRectangle(cornerRadius: 6))
         }
-    }
-}
-
-/// Compact orange button for the trailing title-bar update action.
-private struct CompactUpdateToolbarButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.callout.weight(.semibold))
-            .foregroundColor(.white)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 2)
-            .background(
-                RoundedRectangle(cornerRadius: 5)
-                    .fill(Color.wipeoutAccentFill)
-                    .brightness(configuration.isPressed ? -0.08 : 0)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 5)
-                    .strokeBorder(Color.wipeoutAccent, lineWidth: 1)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 5))
     }
 }
 
