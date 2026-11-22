@@ -43,10 +43,25 @@ private enum UpdateError: LocalizedError {
     }
 }
 
+/// Progress reported while installing an update. The zip download uses the
+/// URLSession data delegate's incremental callbacks (equivalent information
+/// to a download task's `didWriteData`) so the file can still be written
+/// into an exclusive `O_EXCL` destination.
+enum UpdateInstallStage: Equatable {
+    case download(received: Int64, total: Int64?)
+    case verifying
+    case verified
+}
+
+typealias UpdateInstallProgressHandler = @Sendable (UpdateInstallStage) -> Void
+
 private final class OneShotRequest: NSObject, URLSessionDataDelegate {
     private let output: FileHandle?
     private let maximumBytes: Int64
+    private let onProgress: UpdateInstallProgressHandler?
     private var receivedBytes: Int64 = 0
+    private var expectedTotal: Int64?
+    private var lastProgressReport = Date.distantPast
     private var response: HTTPURLResponse?
     private var responseIsRedirect = false
     private var storedError: Error?
@@ -54,9 +69,10 @@ private final class OneShotRequest: NSObject, URLSessionDataDelegate {
     private var session: URLSession?
     private var body = Data()
 
-    init(output: FileHandle?, maximumBytes: Int64) {
+    init(output: FileHandle?, maximumBytes: Int64, onProgress: UpdateInstallProgressHandler? = nil) {
         self.output = output
         self.maximumBytes = maximumBytes
+        self.onProgress = onProgress
     }
 
     func run(_ request: URLRequest) async throws -> (HTTPURLResponse, Data) {
@@ -102,11 +118,14 @@ private final class OneShotRequest: NSObject, URLSessionDataDelegate {
 
         self.response = httpResponse
         responseIsRedirect = UpdateChecker.isRedirect(httpResponse.statusCode)
-        if !responseIsRedirect,
-           response.expectedContentLength > maximumBytes {
-            storedError = UpdateError.message("The update download was unexpectedly large.")
-            completionHandler(.cancel)
-            return
+        if !responseIsRedirect {
+            expectedTotal = Self.contentLength(from: httpResponse)
+            if let expectedTotal, expectedTotal > maximumBytes {
+                storedError = UpdateError.message("The update download was unexpectedly large.")
+                completionHandler(.cancel)
+                return
+            }
+            reportProgress(force: true)
         }
         completionHandler(.allow)
     }
@@ -119,6 +138,7 @@ private final class OneShotRequest: NSObject, URLSessionDataDelegate {
             dataTask.cancel()
             return
         }
+        reportProgress(force: false)
 
         do {
             if let output {
@@ -148,6 +168,28 @@ private final class OneShotRequest: NSObject, URLSessionDataDelegate {
         } else {
             continuation?.resume(throwing: UpdateError.message("The update server returned no response."))
         }
+    }
+
+    private func reportProgress(force: Bool) {
+        guard onProgress != nil else { return }
+        let now = Date()
+        if !force, now.timeIntervalSince(lastProgressReport) < 0.05 {
+            if let expectedTotal, receivedBytes < expectedTotal { return }
+        }
+        lastProgressReport = now
+        onProgress?(.download(received: receivedBytes, total: expectedTotal))
+    }
+
+    private static func contentLength(from response: HTTPURLResponse) -> Int64? {
+        if let header = response.value(forHTTPHeaderField: "Content-Length"),
+           let length = Int64(header.trimmingCharacters(in: .whitespacesAndNewlines)),
+           length > 0 {
+            return length
+        }
+        if response.expectedContentLength > 0 {
+            return response.expectedContentLength
+        }
+        return nil
     }
 }
 
@@ -204,7 +246,9 @@ enum UpdateChecker {
         return UpdateInfo(remoteVersion: lastRemoteText, isNewer: false, error: lastError)
     }
 
-    static func downloadAndRestart() async throws {
+    static func downloadAndRestart(
+        progress: UpdateInstallProgressHandler? = nil
+    ) async throws {
         let target = Bundle.main.bundleURL.standardizedFileURL
         guard target.pathExtension.lowercased() == "app" else {
             throw UpdateError.message("Could not resolve the running app bundle.")
@@ -212,7 +256,7 @@ enum UpdateChecker {
 
         let parent = target.deletingLastPathComponent()
         let identifier = UUID().uuidString.lowercased()
-        let (zip, expectedHash) = try await downloadVerifiedZip(to: parent)
+        let (zip, expectedHash) = try await downloadVerifiedZip(to: parent, progress: progress)
         let pendingRoot = parent.appendingPathComponent(".Wipeout-update-\(identifier).new", isDirectory: true)
         let candidate = pendingRoot.appendingPathComponent("Wipeout.app", isDirectory: true)
 
@@ -318,13 +362,14 @@ enum UpdateChecker {
 
     private static func download(
         _ value: String,
-        to output: FileHandle
+        to output: FileHandle,
+        progress: UpdateInstallProgressHandler? = nil
     ) async throws -> Int64 {
         var current = try freshURL(value)
         for redirectCount in 0...maximumRedirects {
             try ensureTrusted(current)
             let startingOffset = try output.offset()
-            let oneShot = OneShotRequest(output: output, maximumBytes: maximumZipBytes)
+            let oneShot = OneShotRequest(output: output, maximumBytes: maximumZipBytes, onProgress: progress)
             let (response, _) = try await oneShot.run(request(for: current))
 
             if isRedirect(response.statusCode) {
@@ -372,7 +417,10 @@ enum UpdateChecker {
         return FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
     }
 
-    private static func downloadVerifiedZip(to directory: URL) async throws -> (URL, String) {
+    private static func downloadVerifiedZip(
+        to directory: URL,
+        progress: UpdateInstallProgressHandler? = nil
+    ) async throws -> (URL, String) {
         for attempt in 0..<2 {
             let expectedHash = try await readChecksum()
             let pending = directory.appendingPathComponent(
@@ -383,7 +431,7 @@ enum UpdateChecker {
                 let output = try createNewFile(at: pending)
                 let count: Int64
                 do {
-                    count = try await download(zipURL, to: output)
+                    count = try await download(zipURL, to: output, progress: progress)
                     try output.synchronize()
                     try output.close()
                 } catch {
@@ -394,14 +442,22 @@ enum UpdateChecker {
                 guard count >= minimumZipBytes else {
                     throw UpdateError.message("Download failed.")
                 }
+                progress?(.verifying)
                 let actualHash = try sha256(of: pending)
                 if actualHash.caseInsensitiveCompare(expectedHash) == .orderedSame {
+                    progress?(.verified)
+                    do {
+                        try await Task.sleep(nanoseconds: 1_000_000_000)
+                    } catch {
+                        try? FileManager.default.removeItem(at: pending)
+                        throw error
+                    }
                     return (pending, expectedHash)
                 }
 
                 try? FileManager.default.removeItem(at: pending)
                 if attempt == 1 {
-                    throw UpdateError.message("The downloaded update failed its integrity check.")
+                    throw UpdateError.message("The downloaded update did not match its checksum. The update was not installed.")
                 }
             } catch {
                 try? FileManager.default.removeItem(at: pending)
@@ -409,7 +465,7 @@ enum UpdateChecker {
             }
         }
 
-        throw UpdateError.message("The downloaded update failed its integrity check.")
+        throw UpdateError.message("The downloaded update did not match its checksum. The update was not installed.")
     }
 
     private static func sha256(of url: URL) throws -> String {

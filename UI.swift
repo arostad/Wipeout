@@ -3,9 +3,12 @@ import AppKit
 
 @main
 struct WipeoutApp: App {
+    @StateObject private var updateInstall = UpdateInstallController()
+
     var body: some Scene {
         WindowGroup("Wipeout Drive Formatter") {
             ContentView()
+                .environmentObject(updateInstall)
                 .frame(minWidth: 760, minHeight: 620)
         }
         .windowResizability(.contentMinSize)
@@ -13,6 +16,7 @@ struct WipeoutApp: App {
 
         Window("About Wipeout", id: "about") {
             AboutView()
+                .environmentObject(updateInstall)
         }
         .windowResizability(.contentSize)
         .defaultPosition(.center)
@@ -57,7 +61,151 @@ private struct LabeledRow<Content: View>: View {
 /// UserDefaults key for "Check for updates at launch". Defaults to on.
 let checkUpdatesAtLaunchKey = "checkForUpdatesAtLaunch"
 
+/// Shared install state for the main-window update banner and the About window.
+@MainActor
+final class UpdateInstallController: ObservableObject {
+    enum Phase: Equatable {
+        case idle
+        case downloading
+        case verifying
+        case verified
+        case failed(String)
+    }
+
+    @Published private(set) var phase: Phase = .idle
+    @Published private(set) var receivedBytes: Int64 = 0
+    @Published private(set) var totalBytes: Int64? = nil
+
+    var isBusy: Bool {
+        switch phase {
+        case .downloading, .verifying, .verified: return true
+        default: return false
+        }
+    }
+
+    var failedMessage: String? {
+        if case .failed(let message) = phase { return message }
+        return nil
+    }
+
+    var downloadFraction: Double? {
+        guard let total = totalBytes, total > 0 else { return nil }
+        return min(1, Double(receivedBytes) / Double(total))
+    }
+
+    var downloadPercent: Int? {
+        guard let fraction = downloadFraction else { return nil }
+        return min(100, Int((fraction * 100).rounded(.down)))
+    }
+
+    func reset() {
+        phase = .idle
+        receivedBytes = 0
+        totalBytes = nil
+    }
+
+    func start() async throws {
+        phase = .downloading
+        receivedBytes = 0
+        totalBytes = nil
+        do {
+            try await UpdateChecker.downloadAndRestart { [weak self] stage in
+                Task { @MainActor in
+                    self?.apply(stage)
+                }
+            }
+        } catch {
+            phase = .failed(error.localizedDescription)
+            throw error
+        }
+    }
+
+    private func apply(_ stage: UpdateInstallStage) {
+        switch stage {
+        case .download(let received, let total):
+            if phase != .downloading { phase = .downloading }
+            receivedBytes = received
+            totalBytes = total
+        case .verifying:
+            phase = .verifying
+        case .verified:
+            phase = .verified
+        }
+    }
+}
+
+private enum ByteCountText {
+    static func format(_ bytes: Int64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useKB, .useMB, .useGB]
+        formatter.countStyle = .file
+        formatter.includesUnit = true
+        return formatter.string(fromByteCount: bytes)
+    }
+}
+
+private struct UpdateInstallProgressView: View {
+    @ObservedObject var installer: UpdateInstallController
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            switch installer.phase {
+            case .idle:
+                EmptyView()
+            case .downloading:
+                Text("Downloading the update…")
+                    .font(.callout)
+                downloadMeter
+            case .verifying:
+                Text("Verifying checksum…")
+                    .font(.callout)
+                ProgressView()
+                    .progressViewStyle(.linear)
+                    .tint(Color.wipeoutAccent)
+                    .controlSize(.small)
+            case .verified:
+                Text("Checksum verified ✓")
+                    .font(.callout)
+                    .foregroundColor(.wipeoutSuccess)
+            case .failed(let message):
+                Text(message)
+                    .font(.callout)
+                    .foregroundColor(.wipeoutError)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var downloadMeter: some View {
+        if let fraction = installer.downloadFraction,
+           let percent = installer.downloadPercent,
+           let total = installer.totalBytes {
+            HStack(spacing: 8) {
+                ProgressView(value: fraction)
+                    .progressViewStyle(LinearProgressViewStyle(tint: Color.wipeoutAccent))
+                    .controlSize(.small)
+                Text("\(percent)%")
+                    .font(.callout.monospacedDigit())
+                    .foregroundColor(.secondary)
+                    .frame(minWidth: 36, alignment: .trailing)
+            }
+            Text("\(ByteCountText.format(installer.receivedBytes)) of \(ByteCountText.format(total))")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        } else {
+            ProgressView()
+                .progressViewStyle(LinearProgressViewStyle(tint: Color.wipeoutAccent))
+                .controlSize(.small)
+            Text("\(ByteCountText.format(installer.receivedBytes)) downloaded")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+    }
+}
+
 private struct AboutView: View {
+    @EnvironmentObject private var updateInstall: UpdateInstallController
     @State private var status = ""
     @State private var checking = false
     @State private var updateAvailable = false
@@ -110,7 +258,9 @@ private struct AboutView: View {
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
-                if !status.isEmpty {
+                if updateInstall.phase != .idle {
+                    UpdateInstallProgressView(installer: updateInstall)
+                } else if !status.isEmpty {
                     Text(status)
                         .font(.callout)
                         .foregroundColor(.secondary)
@@ -129,7 +279,7 @@ private struct AboutView: View {
                         checkForUpdates()
                     }
                 }
-                .disabled(checking)
+                .disabled(checking || updateInstall.isBusy)
                 Spacer()
                 Button("Close") { NSApp.keyWindow?.close() }
                     .buttonStyle(PrimaryButtonStyle())
@@ -145,6 +295,7 @@ private struct AboutView: View {
     private func checkForUpdates() {
         checking = true
         status = "Checking…"
+        updateInstall.reset()
         Task {
             let info = await UpdateChecker.check()
             checking = false
@@ -161,10 +312,10 @@ private struct AboutView: View {
 
     private func installUpdate() {
         checking = true
-        status = "Downloading. The app will restart when it is ready."
+        status = ""
         Task {
             do {
-                try await UpdateChecker.downloadAndRestart()
+                try await updateInstall.start()
                 NSApplication.shared.terminate(nil)
             } catch {
                 status = error.localizedDescription
@@ -176,6 +327,7 @@ private struct AboutView: View {
 
 struct ContentView: View {
 
+    @EnvironmentObject private var updateInstall: UpdateInstallController
     @StateObject private var runner = FormatRunner()
 
     @State private var disks: [Disk] = []
@@ -191,7 +343,6 @@ struct ContentView: View {
     @State private var didCheckForUpdates = false
     @State private var availableUpdate: UpdateInfo?
     @State private var updateMessage = ""
-    @State private var isInstallingUpdate = false
     @State private var showDetails = false
     @AppStorage(checkUpdatesAtLaunchKey) private var checkAtLaunch = true
 
@@ -481,12 +632,17 @@ struct ContentView: View {
     @ViewBuilder
     private func updateBanner(_ update: UpdateInfo) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(updateMessage.isEmpty
-                 ? "Version \(update.remoteVersion) is available (you have \(BuildInfo.version))."
-                 : updateMessage)
-                .font(.callout)
+            if updateInstall.phase == .idle {
+                Text(updateMessage.isEmpty
+                     ? "Version \(update.remoteVersion) is available (you have \(BuildInfo.version))."
+                     : updateMessage)
+                    .font(.callout)
+                    .foregroundColor(updateMessage.isEmpty ? .primary : .wipeoutError)
+            } else {
+                UpdateInstallProgressView(installer: updateInstall)
+            }
 
-            if !isInstallingUpdate {
+            if !updateInstall.isBusy {
                 HStack {
                     Button("Update") { installUpdate() }
                         .buttonStyle(PrimaryButtonStyle())
@@ -494,11 +650,9 @@ struct ContentView: View {
                     Button("Later") {
                         availableUpdate = nil
                         updateMessage = ""
+                        updateInstall.reset()
                     }
                 }
-            } else {
-                ProgressView()
-                    .controlSize(.small)
             }
         }
         .padding(10)
@@ -521,15 +675,13 @@ struct ContentView: View {
 
     private func installUpdate() {
         guard availableUpdate != nil else { return }
-        isInstallingUpdate = true
-        updateMessage = "Downloading the new version. The app will restart when it is ready."
+        updateMessage = ""
         Task {
             do {
-                try await UpdateChecker.downloadAndRestart()
+                try await updateInstall.start()
                 NSApplication.shared.terminate(nil)
             } catch {
                 updateMessage = error.localizedDescription
-                isInstallingUpdate = false
             }
         }
     }
