@@ -399,6 +399,7 @@ private struct AboutView: View {
 
 struct ContentView: View {
 
+    @Environment(\.openWindow) private var openWindow
     @EnvironmentObject private var updateInstall: UpdateInstallController
     @StateObject private var runner = FormatRunner()
 
@@ -679,22 +680,18 @@ struct ContentView: View {
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .toolbar {
-            // Only add a ToolbarItem when an update exists. 0.4.14–0.4.17 always
-            // attached a zero-size placeholder so the compact title-bar height
-            // would stay put; on macOS 26 that empty item still drew a vacant
-            // glass capsule at the trailing edge. The compact title bar itself
-            // stays in the chrome via .windowToolbarStyle(.unifiedCompact), so
-            // showing or hiding the button does not change the window size.
-            if let update = availableUpdate {
-                if #available(macOS 26.0, *) {
-                    ToolbarItem(placement: .primaryAction) {
-                        updateToolbarButton(update)
-                    }
-                    .sharedBackgroundVisibility(.hidden)
-                } else {
-                    ToolbarItem(placement: .primaryAction) {
-                        updateToolbarButton(update)
-                    }
+            // About is always in the trailing-most slot so the compact
+            // title-bar height and the 760×684 window stay put. When an
+            // update exists, Update Available sits just to its left.
+            // No empty placeholder (that drew a glass capsule on macOS 26).
+            if #available(macOS 26.0, *) {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    trailingToolbarButtons
+                }
+                .sharedBackgroundVisibility(.hidden)
+            } else {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    trailingToolbarButtons
                 }
             }
         }
@@ -739,12 +736,20 @@ struct ContentView: View {
     // MARK: Actions
 
     @ViewBuilder
+    private var trailingToolbarButtons: some View {
+        if let update = availableUpdate {
+            updateToolbarButton(update)
+        }
+        aboutToolbarButton
+    }
+
+    @ViewBuilder
     private func updateToolbarButton(_ update: UpdateInfo) -> some View {
         Button {
             showingUpdatePopover = true
         } label: {
             Label {
-                Text("Update")
+                Text("Update Available")
             } icon: {
                 Image(systemName: "arrow.down.circle")
                     .foregroundStyle(Color.wipeoutAccent)
@@ -755,8 +760,23 @@ struct ContentView: View {
         .popover(isPresented: $showingUpdatePopover, arrowEdge: .bottom) {
             updatePopover(update)
         }
-        // Keep a standard toolbar inset from the trailing edge;
-        // the 0.4.14 filled pill sat flush against it.
+    }
+
+    @ViewBuilder
+    private var aboutToolbarButton: some View {
+        Button {
+            openWindow(id: "about")
+            NSApplication.shared.activate(ignoringOtherApps: true)
+        } label: {
+            Label {
+                Text("About")
+            } icon: {
+                Image(systemName: "info.circle")
+            }
+        }
+        .labelStyle(.titleAndIcon)
+        .help("About wipeout")
+        // Trailing inset from the title-bar edge; About is always rightmost.
         .padding(.trailing, 10)
     }
 
